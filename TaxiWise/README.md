@@ -4,6 +4,13 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red?style=flat-square)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-green?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
+[![Live App](https://img.shields.io/badge/🚀%20Live%20App-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
+
+## 🚀 Live Demo
+
+**[👉 פתח את האפליקציה החיה](https://hnb79jc2gumya5rprevmhx.streamlit.app/)**
+
+---
 
 מערכת Full-Stack חכמה לניתוח וחיזוי ביקוש לנסיעות מוניות בניו יורק (NYC Yellow Taxi).
 
