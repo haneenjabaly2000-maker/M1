@@ -333,6 +333,139 @@ def actual_vs_predicted(y_true: np.ndarray, y_pred: np.ndarray) -> go.Figure:
     return _dark(fig)
 
 
+# ── Year-comparison charts ────────────────────────────────────────────────────
+
+YEAR_COLORS = {2023: C["blue"], 2024: C["gold"], 2025: C["green"]}
+YEAR_FILL   = {
+    2023: "rgba(59,130,246,0.09)",
+    2024: "rgba(247,201,72,0.09)",
+    2025: "rgba(16,185,129,0.09)",
+}
+
+
+def yearly_trip_comparison(df: pd.DataFrame) -> go.Figure:
+    yearly = df.groupby("year").size().reset_index(name="trips")
+    fig = go.Figure(go.Bar(
+        x=yearly["year"].astype(str),
+        y=yearly["trips"],
+        marker_color=[YEAR_COLORS.get(y, C["blue"]) for y in yearly["year"]],
+        text=yearly["trips"].apply(lambda x: f"{x:,}"),
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>Trips: %{y:,}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text="Total Trips by Year", font=dict(size=15)),
+        xaxis=dict(title="Year"),
+        yaxis=dict(title="Trips"),
+    )
+    return _dark(fig)
+
+
+def yearly_monthly_trend(df: pd.DataFrame) -> go.Figure:
+    mon_names = ["Jan","Feb","Mar","Apr","May","Jun",
+                 "Jul","Aug","Sep","Oct","Nov","Dec"]
+    fig = go.Figure()
+    for year in sorted(df["year"].unique()):
+        ydf = df[df["year"] == year]
+        monthly = ydf.groupby("month").size().reindex(range(1, 13), fill_value=0)
+        color = YEAR_COLORS.get(year, C["blue"])
+        fig.add_scatter(
+            x=[mon_names[m - 1] for m in monthly.index],
+            y=monthly.values,
+            name=str(year),
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            hovertemplate=f"<b>{year}</b> %{{x}}<br>Trips: %{{y:,}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text="Monthly Demand Trends by Year", font=dict(size=15)),
+        xaxis=dict(title="Month"),
+        yaxis=dict(title="Trips"),
+    )
+    return _dark(fig)
+
+
+def yearly_peak_hours(df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    for year in sorted(df["year"].unique()):
+        ydf = df[df["year"] == year]
+        hourly = ydf.groupby("hour").size().reindex(range(24), fill_value=0)
+        color = YEAR_COLORS.get(year, C["blue"])
+        fill  = YEAR_FILL.get(year, "rgba(59,130,246,0.09)")
+        fig.add_scatter(
+            x=list(range(24)),
+            y=hourly.values,
+            name=str(year),
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=5, color=color),
+            fill="tozeroy",
+            fillcolor=fill,
+            hovertemplate=f"<b>{year}</b> %{{x}}:00<br>Trips: %{{y:,}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text="Peak Hour Comparison by Year", font=dict(size=15)),
+        xaxis=dict(title="Hour", tickmode="linear", dtick=2),
+        yaxis=dict(title="Trips"),
+    )
+    return _dark(fig)
+
+
+def yearly_top_zones(df: pd.DataFrame, top_n: int = 10) -> go.Figure:
+    col = "pickup_zone" if "pickup_zone" in df.columns else "PULocationID"
+    top_zones = df[col].value_counts().head(top_n).index.tolist()
+    fig = go.Figure()
+    for year in sorted(df["year"].unique()):
+        ydf = df[df["year"] == year]
+        counts = ydf[col].value_counts()
+        fig.add_bar(
+            x=[str(z)[:22] for z in top_zones],
+            y=[counts.get(z, 0) for z in top_zones],
+            name=str(year),
+            marker_color=YEAR_COLORS.get(year, C["blue"]),
+            hovertemplate=f"<b>{year}</b><br>%{{x}}<br>Trips: %{{y:,}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text=f"Top {top_n} Zones — Year Comparison", font=dict(size=15)),
+        xaxis=dict(title="", tickangle=-30),
+        yaxis=dict(title="Trips"),
+        barmode="group",
+    )
+    return _dark(fig, height=430)
+
+
+def yearly_fare_trend(df: pd.DataFrame) -> go.Figure:
+    mon_names = ["Jan","Feb","Mar","Apr","May","Jun",
+                 "Jul","Aug","Sep","Oct","Nov","Dec"]
+    fig = go.Figure()
+    for year in sorted(df["year"].unique()):
+        ydf = df[df["year"] == year]
+        fare_m = (
+            ydf.groupby("month")["fare_amount"]
+            .mean()
+            .reindex(range(1, 13))
+        )
+        color = YEAR_COLORS.get(year, C["blue"])
+        fig.add_scatter(
+            x=[mon_names[m - 1] for m in fare_m.index],
+            y=fare_m.round(2),
+            name=str(year),
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            hovertemplate=f"<b>{year}</b> %{{x}}<br>Avg Fare: $%{{y:.2f}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text="Average Fare Trend by Year", font=dict(size=15)),
+        xaxis=dict(title="Month"),
+        yaxis=dict(title="Avg Fare ($)"),
+    )
+    return _dark(fig)
+
+
+# ── Hot zones ─────────────────────────────────────────────────────────────────
+
 def hot_zones_chart(hot_df: pd.DataFrame) -> go.Figure:
     if hot_df.empty:
         return go.Figure()

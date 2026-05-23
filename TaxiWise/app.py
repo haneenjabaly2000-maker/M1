@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # ── Src imports ───────────────────────────────────────────────────────────────
-from src.data_loader import load_trips, load_zones, compute_demand, get_kpis
+from src.data_loader import load_trips, load_zones, compute_demand, get_kpis, compute_kpis
 from src.model       import get_model, predict_single, get_hot_zones
 import src.charts as charts
 
@@ -133,11 +133,11 @@ section[data-testid="stSidebar"] {
 # ── Data bootstrap ────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def _bootstrap():
-    return load_trips(), load_zones(), compute_demand(), get_kpis()
+    return load_trips(), load_zones(), compute_demand()
 
 
 with st.spinner("Loading NYC Taxi data …"):
-    df, zones, demand, kpis = _bootstrap()
+    df_all, zones, demand = _bootstrap()
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -156,6 +156,7 @@ with st.sidebar:
     PAGES = {
         "📊  Overview":              "overview",
         "📈  Historical Analytics":  "analytics",
+        "📅  Year Comparison":       "comparison",
         "🔮  Demand Prediction":     "prediction",
         "🗺️  Zone Recommendations":  "zones",
         "⚙️  Model Performance":     "performance",
@@ -165,10 +166,35 @@ with st.sidebar:
     ]
 
     st.markdown("---")
+    st.markdown(
+        '<div style="color:#9CA3AF;font-size:.75rem;font-weight:600;'
+        'letter-spacing:.05em;margin-bottom:6px;">YEAR FILTER</div>',
+        unsafe_allow_html=True,
+    )
+    sel_years = st.multiselect(
+        "Select years",
+        options=[2023, 2024, 2025],
+        default=[2023, 2024, 2025],
+        label_visibility="collapsed",
+    )
+
+
+# ── Apply year filter ─────────────────────────────────────────────────────────
+active_years = sorted(sel_years) if sel_years else [2023, 2024, 2025]
+df = (
+    df_all[df_all["year"].isin(active_years)].reset_index(drop=True)
+    if active_years else df_all
+)
+kpis      = compute_kpis(df)
+years_str = " · ".join(str(y) for y in active_years)
+
+with st.sidebar:
+    st.markdown("---")
     st.markdown(f"""
     <div style="color:#6B7280;font-size:.71rem;line-height:1.7;">
       <b style="color:#9CA3AF;">Data</b><br>
-      NYC TLC Yellow Taxi 2025<br>
+      NYC TLC Yellow Taxi<br>
+      {years_str}<br>
       {kpis['total_trips']:,} trips · 28 features<br><br>
       <b style="color:#9CA3AF;">Model</b><br>
       XGBoost Regressor<br>
@@ -214,7 +240,7 @@ def _pchart(fig, height: int | None = None, **kw):
 def page_overview():
     st.markdown('<div class="page-title">TaxiWise Dashboard</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">Real-time insights · NYC Yellow Taxi 2025</div>',
+        f'<div class="page-subtitle">Real-time insights · NYC Yellow Taxi {years_str}</div>',
         unsafe_allow_html=True,
     )
 
@@ -304,7 +330,9 @@ def page_analytics():
         return
 
     st.markdown(
-        f'<div class="info-banner">Showing <b>{len(fdf):,}</b> trips</div>',
+        f'<div class="info-banner">'
+        f'Showing <b>{len(fdf):,}</b> trips · Years: <b>{years_str}</b>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
@@ -332,7 +360,56 @@ def page_analytics():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Page 3 — Demand Prediction
+# Page 3 — Year Comparison
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_comparison():
+    st.markdown('<div class="page-title">Year Comparison</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'השוואה מלאה בין 2023 · 2024 · 2025 — מגמות ביקוש, אזורים ותעריפים'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    _section("Trip Volume by Year")
+    c1, c2 = st.columns(2)
+    with c1: _pchart(charts.yearly_trip_comparison(df_all))
+    with c2: _pchart(charts.yearly_monthly_trend(df_all))
+
+    _section("Peak Hour Patterns")
+    _pchart(charts.yearly_peak_hours(df_all), height=400)
+
+    _section("Geographic & Fare Trends")
+    c3, c4 = st.columns(2)
+    with c3: _pchart(charts.yearly_top_zones(df_all, top_n=10))
+    with c4: _pchart(charts.yearly_fare_trend(df_all))
+
+    _section("Year-over-Year Summary")
+    yearly = df_all.groupby("year").agg(
+        trips        =("fare_amount",      "count"),
+        avg_fare     =("fare_amount",      "mean"),
+        avg_distance =("trip_distance",    "mean"),
+        avg_duration =("trip_duration_min","mean"),
+    ).reset_index()
+    yearly.columns = ["Year", "Total Trips", "Avg Fare ($)", "Avg Distance (mi)", "Avg Duration (min)"]
+    yearly["Year"]             = yearly["Year"].astype(str)
+    yearly["Total Trips"]      = yearly["Total Trips"].apply(lambda x: f"{x:,}")
+    yearly["Avg Fare ($)"]     = yearly["Avg Fare ($)"].apply(lambda x: f"${x:.2f}")
+    yearly["Avg Distance (mi)"]= yearly["Avg Distance (mi)"].apply(lambda x: f"{x:.1f}")
+    yearly["Avg Duration (min)"]= yearly["Avg Duration (min)"].apply(lambda x: f"{x:.1f}")
+    st.dataframe(yearly, use_container_width=True, hide_index=True)
+
+    st.markdown(
+        '<div class="info-banner" style="margin-top:1rem;">'
+        '💡 דף זה מציג תמיד את כל השנים ללא תלות בפילטר השנה בסרגל הצד.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Page 4 — Demand Prediction
 # ═════════════════════════════════════════════════════════════════════════════
 
 def page_prediction():
@@ -634,6 +711,7 @@ def page_performance():
 _ROUTES = {
     "overview":    page_overview,
     "analytics":   page_analytics,
+    "comparison":  page_comparison,
     "prediction":  page_prediction,
     "zones":       page_recommendations,
     "performance": page_performance,

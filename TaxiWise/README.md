@@ -3,6 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red?style=flat-square)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-green?style=flat-square)
+![Years](https://img.shields.io/badge/Data-2023--2025-orange?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 [![Live App](https://img.shields.io/badge/🚀%20Live%20App-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
 
@@ -12,26 +13,26 @@
 
 ---
 
-מערכת Full-Stack חכמה לניתוח וחיזוי ביקוש לנסיעות מוניות בניו יורק (NYC Yellow Taxi).
+מערכת Full-Stack חכמה לניתוח וחיזוי ביקוש לנסיעות מוניות בניו יורק (NYC Yellow Taxi) לשנים **2023, 2024 ו-2025**.
 
 ---
 
 ## 🎯 מטרת המערכת
 
-TaxiWise מנתחת נתוני נסיעות מוניות של NYC, מחזה ביקוש עתידי לפי אזור ושעה, וממליצה לנהגים באילו אזורים כדאי להתמקם.
+TaxiWise מנתחת נתוני נסיעות מוניות של NYC על פני שלוש שנים, מחזה ביקוש עתידי לפי אזור ושעה, וממליצה לנהגים באילו אזורים כדאי להתמקם.
 
 | משתמש | תועלת |
 |-------|--------|
 | 🚖 נהגי מונית | לדעת באיזה אזור כדאי להמתין בכל שעה |
 | 🏢 מנהלי צי | לתכנן פריסה אופטימלית של הצי |
-| 📊 אנליסטים | לנתח מגמות ביקוש לאורך זמן |
+| 📊 אנליסטים | לנתח מגמות ביקוש לאורך 3 שנים |
 
 ---
 
 ## 🏗️ ארכיטקטורה
 
 ```
-PARQUET Data → Preprocessing → Feature Engineering → XGBoost Model → Streamlit Dashboard
+PARQUET/CSV 2023+2024+2025 → Preprocessing → Feature Engineering → XGBoost Model → Streamlit Dashboard
 ```
 
 ---
@@ -41,18 +42,19 @@ PARQUET Data → Preprocessing → Feature Engineering → XGBoost Model → Str
 ```
 TaxiWise/
 ├── data/
-│   ├── raw/                     # קבצי PARQUET גולמיים
+│   ├── raw/                     # קבצי PARQUET גולמיים (2023/2024/2025)
 │   ├── processed/               # נתונים מנוקים ומעובדים
 │   └── taxi_zone_lookup.csv     # 265 אזורי NYC TLC
 ├── src/
-│   ├── utils.py                 # כלים, logging, מחולל סינתטי
-│   ├── preprocess.py            # ניקוי נתונים
-│   ├── features.py              # Feature Engineering
-│   ├── train.py                 # אימון XGBoost
+│   ├── utils.py                 # כלים, logging, מחולל סינתטי (2023-2025)
+│   ├── data_loader.py           # טעינה מרובת שנים: PARQUET → CSV → Synthetic
+│   ├── charts.py                # גרפי Plotly + גרפי השוואה בין שנים
+│   ├── model.py                 # XGBoost מאומן על נתוני 3 שנים
 │   └── predict.py               # חיזוי והמלצות
 ├── models/                      # מודלים שמורים
 ├── notebooks/                   # EDA
-├── app.py                       # Streamlit Dashboard
+├── app.py                       # Streamlit Dashboard (6 עמודים)
+├── yellow_taxi_2025.csv         # נתוני 2025 (CSV)
 ├── requirements.txt
 └── README.md
 ```
@@ -74,25 +76,36 @@ pip install -r requirements.txt
 ### 2. הכנת נתונים
 
 **אפשרות א׳ — נתונים סינתטיים (אוטומטי):**
-אין צורך בפעולה — המערכת מייצרת 600,000 שורות אוטומטית.
+אין צורך בפעולה — המערכת מייצרת 200,000 שורות לכל שנה (2023/2024/2025) אוטומטית.
 
 **אפשרות ב׳ — נתונים אמיתיים:**
-הורד קבצי PARQUET מ-[NYC TLC](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) ומקם ב-`data/raw/`.
+הורד קבצי PARQUET מ-[NYC TLC](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) ומקם ב-`data/raw/`. הקבצים ייטענו אוטומטית לפי שנה.
 
-### 3. הרצת Pipeline
+**אפשרות ג׳ — קבצי CSV:**
+מקם קבצים בשם `yellow_taxi_2023.csv`, `yellow_taxi_2024.csv`, `yellow_taxi_2025.csv` בתיקיית הפרויקט.
 
-```bash
-python src/preprocess.py   # ניקוי נתונים
-python src/features.py     # Feature Engineering
-python src/train.py        # אימון מודל
-```
-
-### 4. הרצת הדשבורד
+### 3. הרצת הדשבורד
 
 ```bash
 streamlit run app.py
 # פתח: http://localhost:8501
 ```
+
+---
+
+## 🗂️ Pipeline טעינת נתונים (Multi-Year)
+
+עבור כל שנה (2023, 2024, 2025) המערכת מבצעת:
+
+1. **חיפוש PARQUET** — `data/raw/*{year}*.parquet`
+2. **חיפוש CSV** — `yellow_taxi_{year}.csv` בתיקיית הפרויקט
+3. **Fallback סינתטי** — 200,000 שורות ריאליסטיות עם seed לפי השנה
+
+לאחר הטעינה:
+- חישוב `trip_duration_min` מ-datetime אם חסר
+- הוספת שמות אזורים מ-`taxi_zone_lookup.csv`
+- ניקוי נתונים אחיד (fare, distance, duration)
+- איחוד לתוך DataFrame אחד עם עמודת `year`
 
 ---
 
@@ -109,28 +122,19 @@ streamlit run app.py
 
 ---
 
-## 📦 מודולים
+## 📊 דשבורד — 6 עמודים
 
-### `src/utils.py`
-- Logging מוגדר
-- טעינת טבלת אזורים (265 zones)
-- מחולל נתונים סינתטיים ריאליסטיים
+| עמוד | תוכן |
+|------|------|
+| **Overview** | KPI Cards, Top Zones, Heatmap שעה×יום |
+| **Historical Analytics** | גרפי זמן, Borough breakdown, פילטר שנה/חודש/שעה |
+| **Year Comparison** | השוואת נסיעות / מגמות / אזורים / תעריפים בין 2023, 2024, 2025 |
+| **Demand Prediction** | בחירת אזור/שעה/יום → חיזוי ביקוש |
+| **Zone Recommendations** | Top-N אזורים חמים עם הסברים |
+| **Model Performance** | MAE/RMSE/R², Feature Importance, Residuals |
 
-### `src/preprocess.py`
-סינון: נסיעות שגויות, ערכים חסרים, outliers, אזורים לא חוקיים, זמני נסיעה בלתי סבירים.
-
-### `src/features.py`
-פיצ'רים: `pickup_hour`, `pickup_day_of_week`, `pickup_month`, `is_weekend`, `is_rush_hour`, `trip_duration`, `historical_trip_count`, `avg_fare_amount`, `avg_trip_distance`, `avg_trip_duration`.
-
-### `src/train.py`
-- XGBoost Regressor (n=300, depth=6, lr=0.1)
-- Train/Test Split 80/20 (time-based)
-- מדדים: MAE, RMSE, R²
-- שומר: `models/taxiwise_model.joblib`
-
-### `src/predict.py`
-- `predict_demand(zone, hour, day, month)` → ביקוש צפוי
-- `get_top_zones(hour, day, month, top_n)` → אזורים מומלצים
+### פילטר שנה (Sidebar)
+בחרי שנה אחת, שתיים, או את כולן — כל הדפים (מלבד Year Comparison) יתעדכנו בהתאם.
 
 ---
 
@@ -139,39 +143,28 @@ streamlit run app.py
 **Input:**
 ```
 pickup_location_id, pickup_hour, pickup_day_of_week,
-pickup_month, is_weekend, is_rush_hour,
-historical_trip_count, avg_fare_amount,
+pickup_month, zone_total_trips, avg_fare_amount,
 avg_trip_distance, avg_trip_duration
 ```
 
 **Output:** `predicted_trip_demand` (מספר נסיעות צפוי)
 
+המודל מאומן על נתונים היסטוריים משולבים מ-2023, 2024 ו-2025 לשיפור הדיוק.
+
 **Feature Importance (סדר ירידה):**
-1. `historical_trip_count`
+1. `zone_total_trips`
 2. `pickup_hour`
-3. `pickup_location_id`
+3. `PULocationID`
 4. `pickup_day_of_week`
-5. `is_rush_hour`
-
----
-
-## 📊 דשבורד — 5 עמודים
-
-| עמוד | תוכן |
-|------|------|
-| **Overview** | KPI Cards, Top Zones, Heatmap שעה×יום |
-| **Historical Analytics** | גרפי זמן, השוואת 2025 vs 2026, Borough breakdown |
-| **Demand Prediction** | בחירת אזור/שעה/יום → חיזוי ביקוש |
-| **Zone Recommendations** | Top-N אזורים חמים עם הסברים |
-| **Model Performance** | MAE/RMSE/R², Feature Importance, Residuals |
+5. `avg_fare`
 
 ---
 
 ## 📊 נתוני NYC TLC
 
 - **מקור:** [nyc.gov/site/tlc](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
-- **פורמט:** PARQUET
-- **תקופה:** 2025–2026
+- **פורמט:** PARQUET / CSV
+- **תקופה:** 2023–2025
 - **שדות:** pickup/dropoff datetime, LocationID, distance, fare, tip, payment_type
 
 ---
@@ -186,21 +179,11 @@ avg_trip_distance, avg_trip_duration
 
 ---
 
-## 🔧 הגדרות מתקדמות (.env)
-
-```env
-OPENWEATHER_API_KEY=your_key   # Weather API (אופציונלי)
-SYNTHETIC_ROWS=600000           # גודל נתונים סינתטיים
-XGB_N_ESTIMATORS=300            # עצים במודל
-```
-
----
-
 ## 📄 רישיון
 
-MIT License — חופשי לשימוש, שינוי והפצה.
+MIT License — חופשי לשימוי, שינוי והפצה.
 
 ---
 
 **🚖 TaxiWise — Drive Smarter, Earn More**
-*נבנה עם Python, XGBoost ו-Streamlit*
+*נבנה עם Python, XGBoost ו-Streamlit · נתוני NYC Yellow Taxi 2023–2025*

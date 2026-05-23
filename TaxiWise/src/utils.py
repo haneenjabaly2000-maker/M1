@@ -69,7 +69,7 @@ def generate_synthetic_data(
     preprocessing works identically on both real and synthetic data.
     """
     if years is None:
-        years = [2025, 2026]
+        years = [2023, 2024, 2025]
 
     logger = get_logger("utils.synth")
     logger.info(f"Generating {n_rows:,} synthetic trip rows (seed={seed}) ...")
