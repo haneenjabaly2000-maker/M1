@@ -23,9 +23,5 @@ models/*.pkl
 *.DS_Store
 Thumbs.db
 
-# Claude Code memory (private)
+# Claude Code memory (private — never commit)
 .claude/
-
-# Large raw data files (only pre-generated synthetic parquet should be committed)
-yellow_taxi_2023_2024_small_merged.csv
-OLD/
