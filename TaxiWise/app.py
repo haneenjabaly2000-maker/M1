@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import streamlit as st
 import numpy as np
+import pandas as pd
 
 # ── Must be the very first Streamlit call ─────────────────────────────────────
 st.set_page_config(
@@ -22,9 +23,12 @@ st.set_page_config(
 )
 
 # ── Src imports ───────────────────────────────────────────────────────────────
-from src.data_loader import load_trips, load_zones, compute_demand, get_kpis, compute_kpis
-from src.model       import get_model, predict_single, get_hot_zones
-import src.charts as charts
+from src.data_loader import load_trips, load_zones, compute_demand, compute_kpis
+from src.model       import (get_model, get_hot_zones,
+                              load_regression_model, predict_regression)
+import src.charts     as charts
+import src.clustering as clust
+import src.regression as reg
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS — dark-mode polish
@@ -160,6 +164,8 @@ with st.sidebar:
         "🔮  Demand Prediction":     "prediction",
         "🗺️  Zone Recommendations":  "zones",
         "⚙️  Model Performance":     "performance",
+        "🔵  Clustering":            "clustering",
+        "📉  Regression":            "regression",
     }
     page_key = PAGES[
         st.radio("Navigation", list(PAGES.keys()), label_visibility="collapsed")
@@ -173,14 +179,14 @@ with st.sidebar:
     )
     sel_years = st.multiselect(
         "Select years",
-        options=[2023, 2024, 2025],
-        default=[2023, 2024, 2025],
+        options=[2023, 2024, 2025, 2026],
+        default=[2023, 2024, 2025, 2026],
         label_visibility="collapsed",
     )
 
 
 # ── Apply year filter ─────────────────────────────────────────────────────────
-active_years = sorted(sel_years) if sel_years else [2023, 2024, 2025]
+active_years = sorted(sel_years) if sel_years else [2023, 2024, 2025, 2026]
 df = (
     df_all[df_all["year"].isin(active_years)].reset_index(drop=True)
     if active_years else df_all
@@ -197,8 +203,8 @@ with st.sidebar:
       {years_str}<br>
       {kpis['total_trips']:,} trips · 28 features<br><br>
       <b style="color:#9CA3AF;">Model</b><br>
-      XGBoost Regressor<br>
-      Demand forecasting by zone
+      LR / Random Forest Regression<br>
+      Train 2023–2025 · Test 2026
     </div>
     """, unsafe_allow_html=True)
 
@@ -367,7 +373,7 @@ def page_comparison():
     st.markdown('<div class="page-title">Year Comparison</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="page-subtitle">'
-        'השוואה מלאה בין 2023 · 2024 · 2025 — מגמות ביקוש, אזורים ותעריפים'
+        'השוואה מלאה בין 2023 · 2024 · 2025 · 2026 — מגמות ביקוש, אזורים ותעריפים'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -409,19 +415,35 @@ def page_comparison():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Page 4 — Demand Prediction
+# Page 4 — Demand Prediction  (main regression model)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def page_prediction():
     st.markdown('<div class="page-title">Demand Prediction</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">Predict trip demand for any zone & time using XGBoost</div>',
+        '<div class="page-subtitle">'
+        'Interactive trip-demand forecast · Regression model trained on 2023–2025 · Validated on 2026'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Training model …"):
-        model, metrics, fi, y_te, y_pred = get_model()
+    with st.spinner("Loading regression model …"):
+        payload = load_regression_model()
 
+    m          = payload["metrics"]
+    model_name = payload["model_name"]
+
+    _kpi_row([
+        ("🤖", model_name,                          "Active Model",  "best by R²"),
+        ("📉", f"{m['mae']:.2f}",                   "MAE",           "trips error"),
+        ("📊", f"{m['rmse']:.2f}",                  "RMSE",          "trips error"),
+        ("📈", f"{m['r2']:.3f}",                    "R² Score",      "variance explained"),
+        ("🏋️", f"{payload['n_train']:,}",           "Train rows",    "2023–2025"),
+        ("🧪", f"{payload['n_test']:,}",            "Test rows",
+         "2026" if payload["has_2026"] else "80/20 split"),
+    ])
+
+    st.markdown("---")
     col_form, col_res = st.columns([1, 1], gap="large")
 
     with col_form:
@@ -442,42 +464,72 @@ def page_prediction():
 
         mon_names_full = ["January","February","March","April","May","June",
                           "July","August","September","October","November","December"]
-        month_sel  = st.selectbox("Month", mon_names_full)
-        month_num  = mon_names_full.index(month_sel) + 1
+        month_sel = st.selectbox("Month", mon_names_full)
+        month_num = mon_names_full.index(month_sel) + 1
 
-    # Historical stats for this zone
-    z_hist    = demand[demand["PULocationID"] == loc_id]
+        year_sel = st.selectbox("Year", [2023, 2024, 2025, 2026], index=3)
+
+    # ── Historical zone stats (from demand table) ─────────────────────────────
+    z_hist = demand[demand["PULocationID"] == loc_id]
     if not z_hist.empty:
-        zone_total = float(z_hist["zone_total_trips"].iloc[0])
+        hist_count = float(z_hist["zone_total_trips"].iloc[0])
         avg_fare   = float(z_hist["avg_fare"].mean())
         avg_dist   = float(z_hist["avg_distance"].mean())
         avg_dur    = float(z_hist["avg_duration"].mean())
     else:
-        zone_total = float(demand["zone_total_trips"].mean())
+        hist_count = float(demand["zone_total_trips"].mean())
         avg_fare   = float(demand["avg_fare"].mean())
         avg_dist   = float(demand["avg_distance"].mean())
         avg_dur    = float(demand["avg_duration"].mean())
 
-    pred = predict_single(
-        model, loc_id, hour, dow_num, month_num,
-        zone_total, avg_fare, avg_dist, avg_dur,
-    )
+    features = {
+        "pickup_location_id":    loc_id,
+        "pickup_hour":           hour,
+        "pickup_day_of_week":    dow_num,
+        "pickup_month":          month_num,
+        "historical_trip_count": hist_count,
+        "avg_fare_amount":       avg_fare,
+        "avg_trip_distance":     avg_dist,
+        "avg_trip_duration":     avg_dur,
+        "year":                  year_sel,
+    }
 
-    # Historical average at this zone + hour
-    hist_rows = demand[
-        (demand["PULocationID"] == loc_id) & (demand["hour"] == hour)
-    ]
-    hist_avg = float(hist_rows["trip_count"].mean()) if len(hist_rows) > 0 else 0.0
-    diff_pct = ((pred - hist_avg) / max(hist_avg, 1)) * 100
+    pred = predict_regression(payload, features)
+
+    # ── Demand level (percentile-based) ───────────────────────────────────────
+    y_test = payload["y_test"]
+    p25 = float(np.percentile(y_test, 25))
+    p75 = float(np.percentile(y_test, 75))
+    p90 = float(np.percentile(y_test, 90))
+
+    if pred < p25:
+        level, lvl_color = "Low",       "#6B7280"
+    elif pred < p75:
+        level, lvl_color = "Medium",    "#F7C948"
+    elif pred < p90:
+        level, lvl_color = "High",      "#F97316"
+    else:
+        level, lvl_color = "Very High", "#EF4444"
+
+    # ── Historical avg for comparison ─────────────────────────────────────────
+    hist_rows = demand[(demand["PULocationID"] == loc_id) & (demand["hour"] == hour)]
+    hist_avg  = float(hist_rows["trip_count"].mean()) if len(hist_rows) > 0 else 0.0
+    diff_pct  = ((pred - hist_avg) / max(hist_avg, 1)) * 100
 
     with col_res:
         _section("Prediction Result")
-        arrow   = "▲" if diff_pct >= 0 else "▼"
+        arrow    = "▲" if diff_pct >= 0 else "▼"
         clr_diff = "#10B981" if diff_pct >= 0 else "#EF4444"
         st.markdown(f"""
         <div class="pred-card">
           <div class="pred-value">{pred:.0f}</div>
           <div class="pred-label">Predicted trips / hour</div>
+          <div style="margin-top:10px;">
+            <span style="background:{lvl_color};color:#fff;font-weight:700;
+                   padding:4px 16px;border-radius:20px;font-size:.85rem;">
+              {level} Demand
+            </span>
+          </div>
           <div style="margin-top:12px;font-size:.8rem;color:#9CA3AF;">
             Historical avg at {hour}:00 →
             <b style="color:#FAFAFA;">{hist_avg:.0f} trips</b>
@@ -492,7 +544,7 @@ def page_prediction():
             ("Avg Fare",     f"${avg_fare:.2f}"),
             ("Avg Distance", f"{avg_dist:.1f} mi"),
             ("Avg Duration", f"{avg_dur:.1f} min"),
-            ("Hist. Trips",  f"{int(zone_total):,}"),
+            ("Zone Hist.",   f"{int(hist_count):,}"),
         ]
         pill_html = '<div class="pill-row">'
         for lbl, val in pills:
@@ -505,37 +557,18 @@ def page_prediction():
         pill_html += "</div>"
         st.markdown(pill_html, unsafe_allow_html=True)
 
-    # Explainability
-    st.markdown("---")
-    _section("Why This Prediction?")
+    # ── Model comparison charts ───────────────────────────────────────────────
+    if "all_metrics" in payload:
+        st.markdown("---")
+        _section("Model Comparison (training results)")
+        mc1, mc2 = st.columns(2)
+        with mc1: _pchart(reg.chart_metrics_bar(payload["all_metrics"]))
+        with mc2: _pchart(reg.chart_r2_bar(payload["all_metrics"]))
 
-    ex1, ex2 = st.columns([1, 2])
-    with ex1:
-        peak_hours = list(range(7, 10)) + list(range(17, 20))
-        reasons: list[str] = []
-        for feat in fi["feature"].tolist()[:4]:
-            if feat == "zone_total_trips":
-                tier = "high" if zone_total > demand["zone_total_trips"].quantile(0.75) else "moderate"
-                reasons.append(f"**Zone historical demand** is {tier} ({int(zone_total):,} total trips).")
-            elif feat == "hour":
-                period = "peak" if hour in peak_hours else "off-peak"
-                reasons.append(f"**{hour}:00** is a {period} hour.")
-            elif feat == "avg_fare":
-                tier = "premium" if avg_fare > demand["avg_fare"].mean() else "standard"
-                reasons.append(f"**Avg fare** ${avg_fare:.2f} — {tier} zone.")
-            elif feat == "avg_distance":
-                tier = "long" if avg_dist > demand["avg_distance"].mean() else "short"
-                reasons.append(f"**Trip distance** avg {avg_dist:.1f} mi — {tier} rides.")
-            elif feat == "dow":
-                tier = "weekend" if dow_num >= 5 else "weekday"
-                reasons.append(f"**{dow_sel}** is a {tier} — typical demand pattern.")
-            elif feat == "PULocationID":
-                reasons.append(f"**Zone {loc_id}** has a unique demand fingerprint.")
-        for r in reasons:
-            st.markdown(f"• {r}")
-
-    with ex2:
-        _pchart(charts.feature_importance(fi))
+    # ── Feature importance ────────────────────────────────────────────────────
+    if payload.get("feature_importance") is not None:
+        _section("Feature Importance")
+        _pchart(reg.chart_feature_importance(payload["feature_importance"], model_name))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -635,73 +668,344 @@ def page_recommendations():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Page 5 — Model Performance
+# Page 5 — Model Performance  (regression model)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def page_performance():
     st.markdown('<div class="page-title">Model Performance</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">XGBoost demand-forecasting evaluation & explainability</div>',
+        '<div class="page-subtitle">'
+        'Regression model diagnostics · train 2023–2025 · test 2026'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Evaluating model …"):
-        model, metrics, fi, y_te, y_pred = get_model()
+    with st.spinner("Loading model …"):
+        payload = load_regression_model()
+
+    m          = payload["metrics"]
+    model_name = payload["model_name"]
 
     _section("Performance Metrics")
     _kpi_row([
-        ("📉", f"{metrics['mae']:.2f}",     "MAE",           "mean absolute error"),
-        ("📊", f"{metrics['rmse']:.2f}",    "RMSE",          "root mean sq. error"),
-        ("📈", f"{metrics['r2']:.3f}",      "R² Score",      "explained variance"),
-        ("🏋️",f"{metrics['n_train']:,}",   "Train Samples", "aggregated records"),
-        ("🧪", f"{metrics['n_test']:,}",    "Test Samples",  "held-out set"),
+        ("🤖", model_name,              "Active Model",  "best by R²"),
+        ("📉", f"{m['mae']:.2f}",       "MAE",           "mean absolute error"),
+        ("📊", f"{m['rmse']:.2f}",      "RMSE",          "root mean sq. error"),
+        ("📈", f"{m['r2']:.3f}",        "R² Score",      "explained variance"),
+        ("🏋️", f"{payload['n_train']:,}", "Train rows",  "2023–2025"),
+        ("🧪", f"{payload['n_test']:,}",  "Test rows",
+         "2026" if payload["has_2026"] else "80/20 split"),
     ])
 
-    r2 = metrics["r2"]
+    r2 = m["r2"]
     if r2 > 0.85:
-        badge = "🟢 **Excellent**"
-        note  = "Model explains >85 % of demand variance."
+        badge, note = "🟢 **Excellent**", "Model explains >85% of demand variance."
     elif r2 > 0.70:
-        badge = "🟡 **Good**"
-        note  = "Solid predictive power for demand forecasting."
+        badge, note = "🟡 **Good**",      "Solid predictive power for demand forecasting."
     else:
-        badge = "🔴 **Fair**"
-        note  = "More historical data would improve accuracy."
+        badge, note = "🔴 **Fair**",      "More historical data would improve accuracy."
 
     st.info(
         f"{badge} — {note}  "
-        f"MAE = **{metrics['mae']:.2f}** trips means predictions "
-        f"are off by ~{metrics['mae']:.0f} trips on average."
+        f"MAE = **{m['mae']:.2f}** trips means predictions are off "
+        f"by ~{m['mae']:.0f} trips on average."
     )
 
     st.markdown("---")
-    _section("Diagnostics")
+
+    # ── All-models comparison ─────────────────────────────────────────────────
+    if "all_metrics" in payload:
+        _section("All Models Comparison")
+        rows = [
+            {
+                "Model": name,
+                "MAE":  round(met["mae"],  3),
+                "RMSE": round(met["rmse"], 3),
+                "R²":   round(met["r2"],   4),
+                "Best": "✅" if name == model_name else "",
+            }
+            for name, met in payload["all_metrics"].items()
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        ac1, ac2 = st.columns(2)
+        with ac1: _pchart(reg.chart_metrics_bar(payload["all_metrics"]))
+        with ac2: _pchart(reg.chart_r2_bar(payload["all_metrics"]))
+
+    # ── Diagnostics ───────────────────────────────────────────────────────────
+    _section("Diagnostics — Best Model")
+    y_te   = payload["y_test"]
+    y_pred = payload["y_pred"]
+
     dc1, dc2 = st.columns(2)
-    with dc1: _pchart(charts.feature_importance(fi))
-    with dc2: _pchart(charts.actual_vs_predicted(y_te, y_pred))
+    with dc1:
+        _pchart(reg.chart_actual_vs_pred(y_te, y_pred, model_name))
+    with dc2:
+        if payload.get("feature_importance") is not None:
+            _pchart(reg.chart_feature_importance(payload["feature_importance"], model_name))
+        else:
+            st.info("Feature importance is not available for Linear Regression.")
 
-    _section("Feature Importance Details")
-    fi_disp = fi[["label","importance"]].copy()
-    fi_disp["importance_pct"] = (
-        fi_disp["importance"] / fi_disp["importance"].sum() * 100
-    ).round(1)
-    fi_disp.columns = ["Feature", "Importance Score", "% of Total"]
-    fi_disp["Importance Score"] = fi_disp["Importance Score"].round(4)
-    st.dataframe(fi_disp, use_container_width=True, hide_index=True)
+    # ── Feature importance table ──────────────────────────────────────────────
+    if payload.get("feature_importance") is not None:
+        _section("Feature Importance Details")
+        fi = payload["feature_importance"].copy()
+        fi["importance_pct"] = (fi["importance"] / fi["importance"].sum() * 100).round(1)
+        fi_disp = fi[["label", "importance", "importance_pct"]].copy()
+        fi_disp.columns = ["Feature", "Importance Score", "% of Total"]
+        fi_disp["Importance Score"] = fi_disp["Importance Score"].round(4)
+        st.dataframe(fi_disp, use_container_width=True, hide_index=True)
 
+    # ── Model configuration ───────────────────────────────────────────────────
     _section("Model Configuration")
     cfg_cols = st.columns(3)
-    cfgs = [
-        ("Algorithm",        "XGBoost Regressor"),
-        ("n_estimators",     "400"),
-        ("max_depth",        "6"),
-        ("learning_rate",    "0.05"),
-        ("subsample",        "0.8"),
-        ("colsample_bytree", "0.8"),
-    ]
+    if model_name == "Random Forest":
+        cfgs = [
+            ("Algorithm",     "Random Forest Regressor"),
+            ("n_estimators",  "150"),
+            ("max_depth",     "12"),
+            ("random_state",  "42"),
+            ("n_jobs",        "-1  (all cores)"),
+            ("Test split",    "2026 data" if payload["has_2026"] else "80/20 (test_size=0.2)"),
+        ]
+    else:
+        cfgs = [
+            ("Algorithm",     "Linear Regression"),
+            ("Scaling",       "StandardScaler"),
+            ("Fit intercept", "True"),
+            ("random_state",  "42"),
+            ("Test split",    "2026 data" if payload["has_2026"] else "80/20 (test_size=0.2)"),
+            ("Train years",   "2023, 2024, 2025"),
+        ]
     for i, (k, v) in enumerate(cfgs):
         with cfg_cols[i % 3]:
             st.metric(k, v)
+
+    st.markdown(
+        '<div class="info-banner" style="margin-top:1rem;">'
+        '💡 Zone Recommendations uses a separate XGBoost model for hot-zone ranking. '
+        'Run <code>python train_model.py</code> to pre-train and save <code>models/model.pkl</code>.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Page 7 — Clustering
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_clustering():
+    st.markdown('<div class="page-title">Clustering Analysis</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'KMeans clustering · Elbow Method · PCA visualization on aggregated demand features'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    feat_map = clust.available_features(demand)
+    if not feat_map:
+        st.error("Demand data has no numeric features for clustering.")
+        return
+
+    c_left, c_right = st.columns([2, 1])
+    with c_left:
+        _section("Feature Selection")
+        sel_feats = st.multiselect(
+            "Choose 2–5 numeric features",
+            options=list(feat_map.keys()),
+            default=["trip_count", "avg_fare", "avg_distance"],
+            format_func=lambda x: feat_map[x],
+        )
+    with c_right:
+        _section("Parameters")
+        k         = st.slider("Number of clusters K", 2, 8, 3)
+        normalize = st.checkbox("Apply StandardScaler", value=True)
+
+    if len(sel_feats) < 2:
+        st.warning("Please select at least 2 features.")
+        return
+
+    with st.spinner("Running KMeans …"):
+        labels, X_proc, inertia = clust.run_kmeans(demand, sel_feats, k, normalize)
+
+    use_pca = len(sel_feats) > 2
+    if use_pca:
+        X_2d, var_ratio = clust.apply_pca(X_proc)
+        x_lbl = f"PC1 ({var_ratio[0]*100:.1f}% var)"
+        y_lbl = f"PC2 ({var_ratio[1]*100:.1f}% var)"
+        title = f"KMeans K={k} — PCA 2D Projection"
+        X_plot = X_2d
+    else:
+        X_plot = X_proc
+        x_lbl  = feat_map[sel_feats[0]]
+        y_lbl  = feat_map[sel_feats[1]]
+        title  = f"KMeans K={k} — {x_lbl} vs {y_lbl}"
+
+    _pchart(clust.chart_scatter(X_plot, labels, x_lbl, y_lbl, title))
+
+    st.markdown(
+        f'<div class="info-banner">'
+        f'K={k} · Inertia (WCSS): <b>{inertia:,.1f}</b> · '
+        f'{"Normalization ON ✅" if normalize else "Normalization OFF ⚠️"}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Cluster statistics table
+    _section("Cluster Statistics (Feature Means)")
+    data_slice = demand[sel_feats].dropna().copy()
+    data_slice["Cluster"] = labels
+    cluster_stats = (
+        data_slice.groupby("Cluster")[sel_feats]
+        .mean().round(3)
+        .rename(index=lambda i: f"Cluster {i}")
+        .rename(columns=feat_map)
+    )
+    st.dataframe(cluster_stats, use_container_width=True)
+
+    # Elbow plot
+    st.markdown("---")
+    _section("Elbow Method — Choosing Optimal K")
+    st.markdown("""
+    <div class="info-banner">
+    <b>Elbow Method:</b> plot WCSS (inertia) for K = 1 … 10.
+    The optimal K is at the "elbow" — where inertia stops dropping sharply.
+    The chart compares results <b>with</b> and <b>without</b> StandardScaler to show
+    how normalization affects cluster geometry.
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.spinner("Computing elbow curves …"):
+        ks_n, in_n = clust.compute_elbow(demand, sel_feats, normalize=True)
+        ks_r, in_r = clust.compute_elbow(demand, sel_feats, normalize=False)
+
+    _pchart(clust.chart_elbow(ks_n, in_n, in_r))
+
+    if use_pca:
+        _section("PCA — Explained Variance")
+        _, vr = clust.apply_pca(X_proc)
+        st.markdown(
+            f'<div class="info-banner">'
+            f'PC1 explains <b>{vr[0]*100:.1f}%</b> of variance · '
+            f'PC2 explains <b>{vr[1]*100:.1f}%</b> · '
+            f'Total <b>{(vr[0]+vr[1])*100:.1f}%</b> captured in 2D'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Page 8 — Regression
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_regression():
+    st.markdown('<div class="page-title">Regression Analysis</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'Linear Regression vs Random Forest · Train 2023–2025 · Validate on 2026'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Feature selection
+    _section("Feature Selection")
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        sel_features = st.multiselect(
+            "Features used for prediction",
+            options=list(reg.REGRESSION_FEATURES.keys()),
+            default=list(reg.REGRESSION_FEATURES.keys()),
+            format_func=lambda x: reg.REGRESSION_FEATURES[x],
+        )
+    with c2:
+        st.markdown('<div style="margin-top:2rem;color:#9CA3AF;font-size:.8rem;">'
+                    '<b>Target:</b> trip_count<br>'
+                    '<b>Train:</b> 2023–2025<br>'
+                    '<b>Test:</b> 2026</div>', unsafe_allow_html=True)
+
+    if not sel_features:
+        st.warning("Select at least one feature.")
+        return
+
+    with st.spinner("Training models on 2023–2025 data …"):
+        out = reg.get_regression_results(tuple(sorted(sel_features)))
+
+    results  = out["results"]
+    y_te     = out["y_te"]
+    has_2026 = out["has_2026"]
+
+    if has_2026:
+        st.markdown(
+            '<div class="info-banner">✅ Testing on <b>2026</b> data — real future validation</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="info-banner">⚠️ 2026 data not available — using 80/20 split of 2023–2025</div>',
+            unsafe_allow_html=True,
+        )
+
+    # KPI row — best model
+    best_name  = max(results, key=lambda m: results[m]["r2"])
+    best       = results[best_name]
+    _kpi_row([
+        ("🏆", best_name,                    "Best Model",   "by R² score"),
+        ("📉", f"{best['mae']:.2f}",         "Best MAE",     "trips error"),
+        ("📊", f"{best['rmse']:.2f}",        "Best RMSE",    "trips error"),
+        ("📈", f"{best['r2']:.3f}",          "Best R²",      "variance explained"),
+        ("🏋️", f"{out['n_train']:,}",        "Train rows",   "demand records"),
+        ("🧪", f"{out['n_test']:,}",         "Test rows",    "demand records"),
+    ])
+
+    # Metrics comparison
+    _section("Model Comparison")
+    metrics_rows = []
+    for m, r in results.items():
+        metrics_rows.append({
+            "Model": m,
+            "MAE":   round(r["mae"],  3),
+            "RMSE":  round(r["rmse"], 3),
+            "R²":    round(r["r2"],   4),
+        })
+    st.dataframe(
+        pd.DataFrame(metrics_rows),
+        use_container_width=True, hide_index=True,
+    )
+
+    mc1, mc2 = st.columns(2)
+    with mc1: _pchart(reg.chart_metrics_bar(results))
+    with mc2: _pchart(reg.chart_r2_bar(results))
+
+    # Actual vs predicted (tabs per model)
+    _section("Actual vs Predicted")
+    tabs = st.tabs([f"📊 {m}" for m in results])
+    for tab, (model_name, res) in zip(tabs, results.items()):
+        with tab:
+            _pchart(reg.chart_actual_vs_pred(y_te, res["y_pred"], model_name))
+
+    # Feature importance (models that expose it)
+    fi_entries = [(m, r) for m, r in results.items() if "feature_importance" in r]
+    if fi_entries:
+        _section("Feature Importance")
+        fi_cols = st.columns(len(fi_entries))
+        for col, (model_name, res) in zip(fi_cols, fi_entries):
+            with col:
+                _pchart(reg.chart_feature_importance(
+                    res["feature_importance"], model_name
+                ))
+
+    # Optimization tips
+    _section("Optimization Notes")
+    st.markdown("""
+    <div class="info-banner">
+    💡 <b>Tips to improve accuracy:</b>
+    Remove low-importance features (e.g. <i>dow</i>, <i>month</i> if R² is already high) to
+    reduce overfitting · Add <i>avg_tip</i> as a feature if available · Try feature
+    interactions (e.g. hour × zone) · For Linear Regression, features are auto-scaled
+    (StandardScaler) so raw vs normalised values are comparable.
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -715,5 +1019,7 @@ _ROUTES = {
     "prediction":  page_prediction,
     "zones":       page_recommendations,
     "performance": page_performance,
+    "clustering":  page_clustering,
+    "regression":  page_regression,
 }
 _ROUTES[page_key]()

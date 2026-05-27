@@ -7,9 +7,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+import joblib
+from pathlib import Path
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
+
+_MODEL_PKL = Path(__file__).parent.parent / "models" / "model.pkl"
 
 FEATURE_COLS = [
     "PULocationID", "hour", "dow", "month",
@@ -28,6 +32,36 @@ FEATURE_LABELS = {
     "avg_duration":      "Avg Duration (min)",
 }
 
+
+# ── Regression model (main prediction model) ─────────────────────────────────
+
+@st.cache_resource(show_spinner=False)
+def load_regression_model() -> dict:
+    """
+    Load the best regression model.
+    Priority: models/model.pkl (pre-trained by train_model.py) → inline training fallback.
+    """
+    if _MODEL_PKL.exists():
+        return joblib.load(_MODEL_PKL)
+    from src.regression import build_model_payload
+    return build_model_payload(verbose=False)
+
+
+def predict_regression(payload: dict, features: dict) -> float:
+    """
+    Predict trip_count given a feature dict.
+    Keys in `features` must exactly match payload["feature_cols"].
+    """
+    model     = payload["model"]
+    scaler    = payload["scaler"]
+    feat_cols = payload["feature_cols"]
+    X = np.array([[features[f] for f in feat_cols]], dtype=float)
+    if scaler is not None:
+        X = scaler.transform(X)
+    return float(max(model.predict(X)[0], 0.0))
+
+
+# ── XGBoost model (used by Zone Recommendations) ──────────────────────────────
 
 @st.cache_resource(show_spinner=False)
 def get_model():

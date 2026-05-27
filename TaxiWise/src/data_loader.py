@@ -16,7 +16,7 @@ import streamlit as st
 ROOT     = Path(__file__).parent.parent
 ZONE_CSV = ROOT / "data" / "taxi_zone_lookup.csv"
 RAW_DIR  = ROOT / "data" / "raw"
-YEARS    = [2023, 2024, 2025]
+YEARS    = [2023, 2024, 2025, 2026]
 
 PAYMENT_LABELS = {
     1: "Credit Card", 2: "Cash", 3: "No Charge",
@@ -53,6 +53,7 @@ def _load_year(year: int) -> pd.DataFrame:
             root_csv,
             parse_dates=["tpep_pickup_datetime", "tpep_dropoff_datetime"],
         )
+        df = _ensure_duration(df)
     else:
         from src.utils import generate_synthetic_data
         df = generate_synthetic_data(n_rows=200_000, seed=year, years=[year])
