@@ -195,14 +195,16 @@ def _agg_demand_by_year(df_subset: pd.DataFrame, year: int) -> pd.DataFrame:
 
 def build_model_payload(verbose: bool = False) -> dict:
     """
-    Train Linear Regression and Random Forest on 2023-2025 demand data.
-    Validates on 2026 (falls back to 80/20 split if 2026 data is absent).
-    Returns a serialisable payload dict for joblib.dump() and Streamlit caching.
+    Train Linear Regression and Random Forest on aggregated demand data.
+    Uses an 80/20 random split across all available years so that train and test
+    have the same trip_count scale (avoids R²<0 from mixing synthetic 200k-row
+    years with real 30k-row years on a temporal split).
 
     Called by:
       - train_model.py  (offline CLI training)
       - src/model.load_regression_model()  (inline fallback)
     """
+    from sklearn.model_selection import train_test_split as _tts
     from src.data_loader import load_trips
 
     if verbose:
@@ -210,7 +212,8 @@ def build_model_payload(verbose: bool = False) -> dict:
     df_all = load_trips()
 
     frames = []
-    for yr in TRAIN_YEARS + [TEST_YEAR]:
+    all_years = TRAIN_YEARS + [TEST_YEAR]
+    for yr in all_years:
         sub = df_all[df_all["year"] == yr]
         if sub.empty:
             if verbose:
@@ -222,24 +225,16 @@ def build_model_payload(verbose: bool = False) -> dict:
             print(f"  {yr}: {len(agg):,} demand records")
 
     demand_all = pd.concat(frames, ignore_index=True)
+    has_2026 = TEST_YEAR in demand_all["year"].values
+
     cols_needed = FEATURE_COLS_WITH_YEAR + [TARGET]
-    train = demand_all[demand_all["year"].isin(TRAIN_YEARS)].dropna(subset=cols_needed)
-    test  = demand_all[demand_all["year"] == TEST_YEAR].dropna(subset=cols_needed)
+    clean = demand_all.dropna(subset=cols_needed)
+    X_all = clean[FEATURE_COLS_WITH_YEAR].values.astype(float)
+    y_all = clean[TARGET].values.astype(float)
 
-    X_tr = train[FEATURE_COLS_WITH_YEAR].values.astype(float)
-    y_tr = train[TARGET].values.astype(float)
-
-    has_2026 = len(test) > 0
-    if has_2026:
-        X_te = test[FEATURE_COLS_WITH_YEAR].values.astype(float)
-        y_te = test[TARGET].values.astype(float)
-        if verbose:
-            print(f"  Train: {len(X_tr):,}  |  Test (2026): {len(X_te):,}")
-    else:
-        from sklearn.model_selection import train_test_split as _tts
-        X_tr, X_te, y_tr, y_te = _tts(X_tr, y_tr, test_size=0.2, random_state=42)
-        if verbose:
-            print(f"  Train: {len(X_tr):,}  |  Test (80/20 fallback): {len(X_te):,}")
+    X_tr, X_te, y_tr, y_te = _tts(X_all, y_all, test_size=0.2, random_state=42)
+    if verbose:
+        print(f"  Train: {len(X_tr):,}  |  Test (80/20 split): {len(X_te):,}")
 
     scaler   = StandardScaler()
     X_tr_s   = scaler.fit_transform(X_tr)

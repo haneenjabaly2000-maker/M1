@@ -39,8 +39,8 @@ def main() -> dict:
         "avg_trip_distance", "avg_trip_duration", "year",
     ])
     print("Target    : trip_count")
-    print("Train set : 2023 + 2024 + 2025")
-    print("Test set  : 2026  (fallback: 80/20 split)")
+    print("Data      : 2023 + 2024 + 2025 + 2026  (all years)")
+    print("Split     : 80/20 random split (consistent scale across years)")
     print()
 
     from src.regression import build_model_payload
@@ -57,8 +57,8 @@ def main() -> dict:
     print(f"  RMSE       : {m['rmse']:.3f} trips")
     print(f"  R²         : {m['r2']:.4f}")
     print(f"  Train rows : {payload['n_train']:,}")
-    print(f"  Test rows  : {payload['n_test']:,}  "
-          f"({'2026 real data' if payload['has_2026'] else '80/20 split'})")
+    print(f"  Test rows  : {payload['n_test']:,}  (80/20 random split)"
+          f"{' · includes 2026' if payload['has_2026'] else ''}")
     print()
     print("  All models:")
     for name, met in payload["all_metrics"].items():
