@@ -1,11 +1,9 @@
 """
 TaxiWise — Data Loading & Feature Engineering
-Loads 2023, 2024, 2025 from PARQUET/CSV files or falls back to synthetic data.
-
 Priority per year:
   1. PARQUET files in data/raw/ matching *{year}*.parquet
   2. CSV file in project root: yellow_taxi_{year}.csv
-  3. Synthetic data (200k rows, seeded by year)
+  3. Minimal synthetic fallback (20k rows) — run prepare_data.py to avoid this
 """
 
 from pathlib import Path
@@ -24,6 +22,15 @@ PAYMENT_LABELS = {
 }
 DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# Columns we never use — skip when reading CSV to cut parse time and memory
+_CSV_DROP = frozenset({
+    "data_month", "extra", "mta_tax", "tolls_amount",
+    "improvement_surcharge", "congestion_surcharge",
+    "Airport_fee", "cbd_congestion_fee",
+    "pickup_service_zone", "dropoff_service_zone",
+    "store_and_fwd_flag",
+})
+
 _zone_cache: pd.DataFrame | None = None
 
 
@@ -34,33 +41,63 @@ def _zone_lookup() -> pd.DataFrame | None:
     return _zone_cache
 
 
+def _optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert float64 → float32 to halve memory for large numeric columns."""
+    for col in df.select_dtypes("float64").columns:
+        df[col] = df[col].astype("float32")
+    return df
+
+
 @st.cache_data(show_spinner=False)
 def load_trips() -> pd.DataFrame:
-    """Load taxi trips for 2023–2025 (PARQUET → CSV → synthetic)."""
-    frames = [_load_year(year) for year in YEARS]
+    """Load taxi trips for all years. Returns empty DataFrame on total failure."""
+    frames = []
+    for year in YEARS:
+        df = _load_year(year)
+        if df is not None and not df.empty:
+            frames.append(df)
+    if not frames:
+        st.error(
+            "⚠️ לא ניתן לטעון נתונים. "
+            "הרץ `python prepare_data.py` כדי לייצר את קבצי הנתונים."
+        )
+        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
 
-def _load_year(year: int) -> pd.DataFrame:
+def _load_year(year: int) -> "pd.DataFrame | None":
     parquet_files = sorted(RAW_DIR.glob(f"*{year}*.parquet"))
     root_csv = ROOT / f"yellow_taxi_{year}.csv"
 
-    if parquet_files:
-        df = pd.concat([pd.read_parquet(f) for f in parquet_files], ignore_index=True)
-        df = _ensure_duration(df)
-    elif root_csv.exists():
-        df = pd.read_csv(
-            root_csv,
-            parse_dates=["tpep_pickup_datetime", "tpep_dropoff_datetime"],
-        )
-        df = _ensure_duration(df)
-    else:
-        from src.utils import generate_synthetic_data
-        df = generate_synthetic_data(n_rows=200_000, seed=year, years=[year])
-        df = _ensure_duration(df)
+    try:
+        if parquet_files:
+            df = pd.concat(
+                [pd.read_parquet(f) for f in parquet_files],
+                ignore_index=True,
+            )
+            df = _ensure_duration(df)
 
-    df["year"] = year
-    return _enrich(df)
+        elif root_csv.exists():
+            df = pd.read_csv(
+                root_csv,
+                usecols=lambda c: c not in _CSV_DROP,
+                parse_dates=["tpep_pickup_datetime", "tpep_dropoff_datetime"],
+            )
+            df = _ensure_duration(df)
+
+        else:
+            # Last-resort fallback — run prepare_data.py to eliminate this path
+            from src.utils import generate_synthetic_data
+            df = generate_synthetic_data(n_rows=20_000, seed=year, years=[year])
+            df = _ensure_duration(df)
+
+        df = _optimize_dtypes(df)
+        df["year"] = year
+        return _enrich(df)
+
+    except Exception as exc:
+        st.warning(f"⚠️ שגיאה בטעינת נתוני {year}: {exc}")
+        return None
 
 
 def _ensure_duration(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,26 +155,26 @@ def load_zones() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def compute_demand() -> pd.DataFrame:
-    """Aggregate trip stats per (zone, hour, dow, month) across all years — used by ML model."""
+    """Aggregate trip stats per (zone, hour, dow, month) — used by ML model."""
     df = load_trips()
+    if df.empty:
+        return pd.DataFrame()
     agg = (
         df.groupby(["PULocationID", "hour", "dow", "month"])
         .agg(
-            trip_count   =("fare_amount",      "count"),
-            avg_fare     =("fare_amount",      "mean"),
-            avg_distance =("trip_distance",    "mean"),
-            avg_duration =("trip_duration_min","mean"),
-            avg_tip      =("tip_amount",       "mean"),
+            trip_count   =("fare_amount",       "count"),
+            avg_fare     =("fare_amount",       "mean"),
+            avg_distance =("trip_distance",     "mean"),
+            avg_duration =("trip_duration_min", "mean"),
+            avg_tip      =("tip_amount",        "mean"),
         )
         .reset_index()
     )
     zone_totals = df.groupby("PULocationID").size().rename("zone_total_trips")
-    agg = agg.merge(zone_totals, on="PULocationID", how="left")
-    return agg
+    return agg.merge(zone_totals, on="PULocationID", how="left")
 
 
 def compute_kpis(df: pd.DataFrame) -> dict:
-    """Compute KPI metrics from any trips DataFrame (used for year-filtered views)."""
     if df.empty:
         return {
             "total_trips": 0, "avg_fare": 0.0, "avg_distance": 0.0,

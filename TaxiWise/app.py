@@ -141,7 +141,14 @@ def _bootstrap():
 
 
 with st.spinner("Loading NYC Taxi data …"):
-    df_all, zones, demand = _bootstrap()
+    try:
+        df_all, zones, demand = _bootstrap()
+        if df_all.empty:
+            st.error("הנתונים לא נטענו. הרץ `python prepare_data.py` מקומית ודחוף את הקבצים ל-GitHub.")
+            st.stop()
+    except Exception as _e:
+        st.error(f"שגיאה בטעינת נתונים: {_e}")
+        st.stop()
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────

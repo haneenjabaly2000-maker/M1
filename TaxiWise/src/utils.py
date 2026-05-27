@@ -4,6 +4,8 @@ TaxiWise - Utility Functions
 Logging, path helpers, schema validation, and synthetic data generation.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import random
