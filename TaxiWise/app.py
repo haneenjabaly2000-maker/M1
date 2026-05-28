@@ -325,7 +325,7 @@ def page_analytics():
         with f2:
             mon_names = ["Jan","Feb","Mar","Apr","May","Jun",
                          "Jul","Aug","Sep","Oct","Nov","Dec"]
-            avail_months = sorted(df["month"].unique())
+            avail_months = sorted(int(m) for m in df["month"].dropna().unique() if 1 <= int(m) <= 12)
             avail_labels = [mon_names[m - 1] for m in avail_months]
             sel_m_labels = st.multiselect("Month", avail_labels, default=avail_labels)
             sel_months   = [avail_months[avail_labels.index(l)] for l in sel_m_labels] \
