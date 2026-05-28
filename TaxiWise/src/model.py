@@ -35,19 +35,28 @@ FEATURE_LABELS = {
     "avg_duration":      "Avg Duration (min)",
 }
 
-_MISSING_MSG = (
-    "הרץ `python train_model.py` מקומית, "
-    "ואז `git add models/ && git push` כדי להעלות את המודל."
-)
-
-
 # ── Regression model (LR / RF — main prediction) ─────────────────────────────
 
 @st.cache_resource(show_spinner=False)
 def load_regression_model() -> dict:
     """Load pre-trained regression model from models/model.pkl."""
     if not _MODEL_PKL.exists():
-        st.error(f"⚠️ models/model.pkl לא נמצא. {_MISSING_MSG}")
+        st.warning("⚠️ קובץ המודל `models/model.pkl` לא נמצא.")
+        st.info(
+            "**למה זה קורה?**\n\n"
+            "המודל לא אומן עדיין. הקובץ `models/model.pkl` נוצר רק לאחר הרצת "
+            "סקריפט האימון — הוא לא נכלל אוטומטית.\n\n"
+            "**כיצד לתקן:**\n"
+            "1. פתח טרמינל בתיקיית הפרויקט\n"
+            "2. הרץ: `python train_model.py`\n"
+            "3. המתן להשלמה (~1-2 דקות)\n"
+            "4. דחוף ל-GitHub:\n"
+            "```\n"
+            "git add models/\n"
+            "git commit -m 'Add trained model pkl'\n"
+            "git push\n"
+            "```"
+        )
         st.stop()
     return joblib.load(_MODEL_PKL)
 
@@ -68,7 +77,19 @@ def predict_regression(payload: dict, features: dict) -> float:
 def load_xgb_model():
     """Load pre-trained XGBoost model from models/xgb_model.pkl."""
     if not _XGB_PKL.exists():
-        st.error(f"⚠️ models/xgb_model.pkl לא נמצא. {_MISSING_MSG}")
+        st.warning("⚠️ קובץ המודל `models/xgb_model.pkl` לא נמצא.")
+        st.info(
+            "**למה זה קורה?**\n\n"
+            "מודל ה-XGBoost לא אומן עדיין.\n\n"
+            "**כיצד לתקן:**\n"
+            "1. הרץ: `python train_model.py`\n"
+            "2. דחוף ל-GitHub:\n"
+            "```\n"
+            "git add models/\n"
+            "git commit -m 'Add trained model pkl'\n"
+            "git push\n"
+            "```"
+        )
         st.stop()
     p = joblib.load(_XGB_PKL)
     return p["model"], p["metrics"], p["feature_importance"], p["y_test"], p["y_pred"]
