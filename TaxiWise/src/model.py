@@ -39,26 +39,16 @@ FEATURE_LABELS = {
 
 @st.cache_resource(show_spinner=False)
 def load_regression_model() -> dict:
-    """Load pre-trained regression model from models/model.pkl."""
-    if not _MODEL_PKL.exists():
-        st.warning("⚠️ קובץ המודל `models/model.pkl` לא נמצא.")
-        st.info(
-            "**למה זה קורה?**\n\n"
-            "המודל לא אומן עדיין. הקובץ `models/model.pkl` נוצר רק לאחר הרצת "
-            "סקריפט האימון — הוא לא נכלל אוטומטית.\n\n"
-            "**כיצד לתקן:**\n"
-            "1. פתח טרמינל בתיקיית הפרויקט\n"
-            "2. הרץ: `python train_model.py`\n"
-            "3. המתן להשלמה (~1-2 דקות)\n"
-            "4. דחוף ל-GitHub:\n"
-            "```\n"
-            "git add models/\n"
-            "git commit -m 'Add trained model pkl'\n"
-            "git push\n"
-            "```"
-        )
-        st.stop()
-    return joblib.load(_MODEL_PKL)
+    """Load regression model — from pkl if available, otherwise train inline and cache."""
+    if _MODEL_PKL.exists():
+        return joblib.load(_MODEL_PKL)
+    from src.regression import build_model_payload
+    payload = build_model_payload(verbose=False)
+    try:
+        joblib.dump(payload, _MODEL_PKL)
+    except Exception:
+        pass
+    return payload
 
 
 def predict_regression(payload: dict, features: dict) -> float:
@@ -75,24 +65,22 @@ def predict_regression(payload: dict, features: dict) -> float:
 
 @st.cache_resource(show_spinner=False)
 def load_xgb_model():
-    """Load pre-trained XGBoost model from models/xgb_model.pkl."""
-    if not _XGB_PKL.exists():
-        st.warning("⚠️ קובץ המודל `models/xgb_model.pkl` לא נמצא.")
-        st.info(
-            "**למה זה קורה?**\n\n"
-            "מודל ה-XGBoost לא אומן עדיין.\n\n"
-            "**כיצד לתקן:**\n"
-            "1. הרץ: `python train_model.py`\n"
-            "2. דחוף ל-GitHub:\n"
-            "```\n"
-            "git add models/\n"
-            "git commit -m 'Add trained model pkl'\n"
-            "git push\n"
-            "```"
+    """Load XGBoost model — from pkl if available, otherwise train inline and cache."""
+    if _XGB_PKL.exists():
+        p = joblib.load(_XGB_PKL)
+        return p["model"], p["metrics"], p["feature_importance"], p["y_test"], p["y_pred"]
+    from src.data_loader import compute_demand
+    demand = compute_demand()
+    model, metrics, fi, y_te, y_pred = _train(demand)
+    try:
+        joblib.dump(
+            {"model": model, "metrics": metrics, "feature_importance": fi,
+             "y_test": y_te, "y_pred": y_pred},
+            _XGB_PKL,
         )
-        st.stop()
-    p = joblib.load(_XGB_PKL)
-    return p["model"], p["metrics"], p["feature_importance"], p["y_test"], p["y_pred"]
+    except Exception:
+        pass
+    return model, metrics, fi, y_te, y_pred
 
 
 # ── XGBoost training (called only from train_model.py) ───────────────────────
