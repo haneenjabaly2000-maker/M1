@@ -24,7 +24,7 @@ st.set_page_config(
 
 # ── Src imports ───────────────────────────────────────────────────────────────
 from src.data_loader import load_trips, load_zones, compute_demand, compute_kpis
-from src.model       import (get_model, get_hot_zones,
+from src.model       import (load_xgb_model, get_hot_zones,
                               load_regression_model, predict_regression)
 import src.charts     as charts
 import src.clustering as clust
@@ -590,7 +590,7 @@ def page_recommendations():
     )
 
     with st.spinner("Loading model …"):
-        model, metrics, fi, y_te, y_pred = get_model()
+        model, metrics, fi, y_te, y_pred = load_xgb_model()
 
     _section("Time Parameters")
 

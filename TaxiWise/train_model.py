@@ -1,72 +1,87 @@
 """
 TaxiWise — Standalone Model Training Script
 ============================================
-Trains Linear Regression and Random Forest on 2023-2025 NYC taxi demand data,
-validates on 2026, selects the best model by R², and saves it to models/model.pkl.
+Trains ALL models and saves them to models/.
+Must be run once before deploying; the Streamlit app only loads pre-trained files.
 
-Usage:
     python train_model.py
 
-The saved payload is loaded by the Streamlit app via @st.cache_resource in
-src/model.load_regression_model(). If model.pkl does not exist, the app
-trains inline automatically, but running this script first is recommended for
-faster startup and reproducibility.
-
-Output file: models/model.pkl
+Output:
+    models/model.pkl      — best LR / Random Forest (main prediction)
+    models/xgb_model.pkl  — XGBoost (Zone Recommendations)
 """
 
 import sys
 from pathlib import Path
 
-# Ensure project root is on the Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import joblib
 
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR   = Path(__file__).parent / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
-MODEL_PATH = MODELS_DIR / "model.pkl"
+MODEL_PATH   = MODELS_DIR / "model.pkl"
+XGB_PATH     = MODELS_DIR / "xgb_model.pkl"
 
 
-def main() -> dict:
+def main():
     print("=" * 60)
-    print("  TaxiWise — Regression Model Training")
+    print("  TaxiWise — Model Training")
     print("=" * 60)
-    print()
-    print("Features  :", [
+
+    # ── 1. Regression model (LR / Random Forest) ──────────────────
+    print("\n[1/2] Regression model (LR + Random Forest)")
+    print("  Features :", [
         "pickup_location_id", "pickup_hour", "pickup_day_of_week",
         "pickup_month", "historical_trip_count", "avg_fare_amount",
         "avg_trip_distance", "avg_trip_duration", "year",
     ])
-    print("Target    : trip_count")
-    print("Data      : 2023 + 2024 + 2025 + 2026  (all years)")
-    print("Split     : 80/20 random split (consistent scale across years)")
+    print("  Target   : trip_count")
+    print("  Split    : 80/20 random across all years")
     print()
 
     from src.regression import build_model_payload
-    payload = build_model_payload(verbose=True)
+    reg_payload = build_model_payload(verbose=True)
+    joblib.dump(reg_payload, MODEL_PATH)
 
-    joblib.dump(payload, MODEL_PATH)
+    m = reg_payload["metrics"]
+    print(f"\n  ✅ Saved → {MODEL_PATH}")
+    print(f"     Best model : {reg_payload['model_name']}")
+    print(f"     MAE={m['mae']:.3f}  RMSE={m['rmse']:.3f}  R²={m['r2']:.4f}")
+    print(f"     Train: {reg_payload['n_train']:,}  Test: {reg_payload['n_test']:,}")
 
-    m = payload["metrics"]
-    print()
+    # ── 2. XGBoost model (Zone Recommendations) ───────────────────
+    print("\n[2/2] XGBoost model (Zone Recommendations)")
+    from src.data_loader import compute_demand
+    from src.model import _train
+
+    print("  Loading demand data …")
+    demand = compute_demand()
+    print(f"  Demand records: {len(demand):,}")
+    print("  Training XGBoost …")
+
+    xgb_model, xgb_metrics, xgb_fi, xgb_yte, xgb_ypred = _train(demand)
+
+    xgb_payload = {
+        "model":              xgb_model,
+        "metrics":            xgb_metrics,
+        "feature_importance": xgb_fi,
+        "y_test":             xgb_yte,
+        "y_pred":             xgb_ypred,
+    }
+    joblib.dump(xgb_payload, XGB_PATH)
+
+    xm = xgb_metrics
+    print(f"\n  ✅ Saved → {XGB_PATH}")
+    print(f"     MAE={xm['mae']:.3f}  RMSE={xm['rmse']:.3f}  R²={xm['r2']:.4f}")
+    print(f"     Train: {xm['n_train']:,}  Test: {xm['n_test']:,}")
+
+    print("\n" + "=" * 60)
+    print("  Both models saved. Now commit and push:")
+    print("    git add models/")
+    print("    git commit -m 'Add pre-trained model pkl files'")
+    print("    git push")
     print("=" * 60)
-    print(f"  Saved → {MODEL_PATH}")
-    print(f"  Best model : {payload['model_name']}")
-    print(f"  MAE        : {m['mae']:.3f} trips")
-    print(f"  RMSE       : {m['rmse']:.3f} trips")
-    print(f"  R²         : {m['r2']:.4f}")
-    print(f"  Train rows : {payload['n_train']:,}")
-    print(f"  Test rows  : {payload['n_test']:,}  (80/20 random split)"
-          f"{' · includes 2026' if payload['has_2026'] else ''}")
-    print()
-    print("  All models:")
-    for name, met in payload["all_metrics"].items():
-        print(f"    {name:<22} MAE={met['mae']:.3f}  "
-              f"RMSE={met['rmse']:.3f}  R²={met['r2']:.4f}")
-    print("=" * 60)
-
-    return payload
 
 
 if __name__ == "__main__":
