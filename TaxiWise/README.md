@@ -1,4 +1,4 @@
-# 🚖 TaxiWise — Real-Time Transportation Intelligence Platform
+# TaxiWise — AI Transportation Intelligence Platform
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red?style=flat-square)
@@ -6,31 +6,31 @@
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-green?style=flat-square)
 ![Years](https://img.shields.io/badge/Data-2023--2026-orange?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-[![Live App](https://img.shields.io/badge/🚀%20Live%20App-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
+[![Live App](https://img.shields.io/badge/Live%20App-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
 
 ---
 
-## 🚀 Live Demo
+## Live Demo
 
-**[👉 Open TaxiWise Live App](https://hnb79jc2gumya5rprevmhx.streamlit.app/)**
+**[Open TaxiWise Live App](https://hnb79jc2gumya5rprevmhx.streamlit.app/)**
 
 ---
 
-## 🧠 What Is TaxiWise?
+## What Is TaxiWise?
 
-TaxiWise is an **AI-powered Real-Time Transportation Intelligence Platform** for NYC Yellow Taxi data (2023–2026).  
-It goes beyond a simple dashboard — it provides demand forecasting, relocation simulation, driver profit estimation, and interactive geo-demand mapping at the level of Uber / Waze-style intelligence systems.
+TaxiWise is an **AI-powered Transportation Intelligence Platform** for NYC Yellow Taxi data (2023–2026).  
+It combines demand forecasting, relocation simulation, driver profit estimation, and interactive geo-demand mapping into a clean 4-page experience.
 
 | User | Value |
 |------|-------|
-| 🚖 Taxi Drivers | Know which zone to head to, and when, to maximize earnings |
-| 🏢 Fleet Managers | Plan optimal fleet deployment across NYC boroughs |
-| 📊 Data Analysts | Explore demand trends, compare years, audit model performance |
-| 🎓 Researchers | Full ML pipeline: LR, RF, XGBoost, KMeans, PCA, SHAP-style explainability |
+| Taxi Drivers | Know which zone to head to, and when, to maximize earnings |
+| Fleet Managers | Plan optimal fleet deployment across NYC boroughs |
+| Data Analysts | Explore demand trends, compare years, audit model performance |
+| Researchers | Full ML pipeline: LR, RF, XGBoost, KMeans, PCA, explainability |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 CSV / PARQUET 2023–2026
@@ -39,12 +39,12 @@ CSV / PARQUET 2023–2026
         ↓
   regression.py + model.py  ──  LR + Random Forest + XGBoost  ──  models/*.pkl
         ↓
-  app.py (Streamlit)  ──  12-page AI Intelligence Platform
+  app.py (Streamlit)  ──  4-page AI Intelligence Platform
 ```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 TaxiWise/
@@ -62,7 +62,7 @@ TaxiWise/
 │   ├── charts.py                 # Plotly chart library
 │   ├── zone_coords.py            # Approximate NYC zone centroid coordinates (map)
 │   └── utils.py                  # Synthetic data generator
-├── app.py                        # 12-page Streamlit dashboard
+├── app.py                        # 4-page Streamlit dashboard
 ├── train_model.py                # Offline model training script
 ├── prepare_data.py               # Pre-generate synthetic parquet data
 ├── requirements.txt
@@ -71,7 +71,7 @@ TaxiWise/
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install dependencies
 
@@ -94,10 +94,10 @@ Output:
 [1/2] Training Regression model (LR + RF) …
   Train: 180,000+ demand records  |  Test: 80/20 split
   Random Forest  MAE=1.2  RMSE=2.9  R²=0.942
-  ✅ Saved → models/model.pkl
+  Saved → models/model.pkl
 
 [2/2] Training XGBoost model …
-  ✅ Saved → models/xgb_model.pkl
+  Saved → models/xgb_model.pkl
 ```
 
 > If you skip this step, both models train automatically on first app launch.
@@ -111,90 +111,75 @@ streamlit run app.py
 
 ---
 
-## 📊 Dashboard — 12 Pages
+## Dashboard — 4 Pages
 
 | Page | Description |
 |------|-------------|
-| **📊 Overview** | KPI cards, Top zones, Demand heatmap, Data sample |
-| **📈 Historical Analytics** | Demand patterns, Borough breakdown, interactive filters |
-| **📅 Year Comparison** | 2023–2026 side-by-side: volume, fare, peak hours |
-| **🔮 Demand Prediction** | Interactive form → trip-count forecast + demand level |
-| **🤖 Real-Time Prediction** | Generalize to any input (unseen combos) · Confidence range · Alerts · Explainability |
-| **🌡️ AI Demand Map** | Interactive Plotly map — zone demand heatmap with hover details |
-| **🚗 Driver Tools** | Relocation Simulator + Profit Estimator — AI advice for drivers |
-| **🔭 Demand Forecast** | 24-hour, Day-of-week, Monthly demand forecast per zone |
-| **🗺️ Zone Recommendations** | Top-N hot zones ranked by XGBoost predicted demand |
-| **⚙️ Model Performance** | Metrics, Actual vs Predicted, Feature Importance, Model config |
-| **🔵 Clustering** | KMeans + Elbow + PCA — zone behavior clusters |
-| **📉 Regression** | LR vs RF comparison with selectable features |
+| **Dashboard** | KPI cards, auto-generated AI insights, demand heatmap, year comparison, top zones |
+| **AI Prediction** | Interactive form → trip-count forecast + AI Demand Map + Driver Assistant + What If? Scenario + Relocation Simulator |
+| **AI Insights** | Model performance, clustering (KMeans + PCA), regression comparison (LR vs RF) |
+| **Forecasting** | 24-hour, Day-of-week, Monthly forecast + Animated demand map with hour slider |
 
 ---
 
-## 🌡️ AI Demand Map
+## AI Prediction Page
+
+**Left column** — Prediction form + AI Driver Assistant card  
+**Right column** — Live AI Demand Map + prediction result card + revenue estimate + smart alerts  
+**Full width** — Explainability cards (rush hour, weekday/weekend, zone percentile, distance context)  
+**Expanders** — Driver Relocation Simulator + What If? Scenario
+
+### AI Driver Assistant
+Automatically finds the best zone at the current hour/day/month using XGBoost and shows:
+- Zone name and borough
+- Predicted demand and revenue estimate
+
+### Smart Alerts
+- Extreme Demand — surge pricing likely
+- High Demand Alert — good driver opportunity
+- Normal Demand — stable conditions
+
+### Relocation Simulator
+Compares two zones and recommends whether to relocate.
+
+```
+Moving from Lower East Side → Midtown Center
+  +42 trips/hr (+35%)     +$18.40/hr revenue
+  Strongly Recommended
+```
+
+### What If? Scenario
+Side-by-side current vs modified scenario with demand delta.
+
+---
+
+## AI Demand Map
 
 Visualizes predicted trip demand across all NYC taxi zones for any selected hour, day, and month.
 
 - **Technology**: Plotly Mapbox (`carto-darkmatter` — no API key needed)
-- **Color scale**: 🔵 Blue = low demand → 🟠 Orange = medium → 🔴 Red = high
-- **Hover**: Zone name · Borough · Predicted demand · Avg fare · Avg distance · Peak hour
+- **Color scale**: Blue = low demand → Orange = medium → Red = high
+- **Hover**: Zone name · Borough · Predicted demand · Avg fare · Peak indicator
 - **Zone coordinates**: Golden-ratio spread within borough bounding boxes
 
 ---
 
-## 🚗 Driver Relocation Simulator
+## Forecasting Page
 
-Compares two zones at any time window and recommends whether to relocate.
-
-**Output:**
-```
-Moving from Lower East Side → Midtown Center
-  ▲ +42 trips/hr (+35%)     ▲ +$18.40/hr revenue
-  ✅ Strongly Recommended
-```
-
-Factors considered: demand delta, revenue per trip, driver share (adjustable 50–100%).
-
----
-
-## 💰 Driver Profit Estimator
-
-For a chosen zone, day, and working-hour window — estimates total trips and revenue.
-
-- Configurable driver share (default 70%)
-- Hourly bar chart + revenue overlay
-- Revenue = Predicted Trips × Avg Fare × Driver Share
-
----
-
-## 🔭 Demand Forecast
-
-Three forecast views per zone:
+Four tabs:
 
 | Tab | What it shows |
 |-----|--------------|
-| ⏰ 24-Hour | Demand for every hour of the selected day |
-| 📅 Day-of-Week | Demand by day (Mon–Sun) at 18:00 |
-| 🗓️ Monthly | Demand by month (Jan–Dec) at 18:00 |
+| 24-Hour | Demand for every hour of the selected day |
+| Day-of-Week | Demand by day (Mon–Sun) |
+| Monthly | Demand by month (Jan–Dec) |
+| Animated Map | Hour slider — live demand map + top 5 zone cards |
 
 Supports future year predictions through **2035** via model extrapolation.
 
 ---
 
-## 🤖 Real-Time AI Prediction
-
-Accepts **any input combination** — including combinations never seen in training data — and generalizes using the trained model.
-
-- Inputs: zone, hour, day, month, year (2023–2035), fare, distance, duration, historical count, passenger count
-- Output: predicted trip count, demand level badge, confidence range (RF P10–P90)
-- **Smart Alerts**:
-  - 🔴 Extreme Demand — surge pricing likely
-  - 🟠 High Demand Alert — good driver opportunity
-  - 🟡 Normal Demand — stable conditions
-- **Explainability cards**: Rush hour type, weekday/weekend, zone percentile, distance vs median, seasonal context
-
----
-
-## 🧠 ML Models
+## ML Models
 
 ### Regression Model (LR / Random Forest)
 **Target**: `trip_count` — aggregated pickups per (zone, hour, day, month, year)
@@ -209,9 +194,9 @@ Accepts **any input combination** — including combinations never seen in train
 | `avg_fare_amount` | Avg fare in zone ($) |
 | `avg_trip_distance` | Avg distance (miles) |
 | `avg_trip_duration` | Avg duration (minutes) |
-| `year` | Year (2023–2026+) |
+| `year` | Year (2023–2035) |
 
-**Split**: 80/20 random across all years (avoids R²<0 from synthetic/real scale mismatch)
+**Split**: 80/20 random across all years
 
 | Metric | Linear Regression | Random Forest |
 |--------|:-----------------:|:-------------:|
@@ -219,15 +204,14 @@ Accepts **any input combination** — including combinations never seen in train
 | RMSE | ~5–9 trips  | ~2–5 trips  |
 | R²   | ~0.55–0.70  | ~0.88–0.96  |
 
-### XGBoost Model (Zone Recommendations)
-Separate model trained on demand features. Used for hot-zone ranking only.  
+### XGBoost Model (Zone Recommendations + Map)
+Separate model trained on demand features. Used for hot-zone ranking and the AI Demand Map.  
 `n_estimators=100, max_depth=6, learning_rate=0.05`
 
 ---
 
-## 🔵 Clustering
+## Clustering (AI Insights page)
 
-Unsupervised zone analysis with:
 - **KMeans** (K selectable 2–8)
 - **Elbow Method** — normalized vs raw comparison
 - **PCA** — 2D projection when >2 features selected
@@ -235,7 +219,7 @@ Unsupervised zone analysis with:
 
 ---
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
@@ -251,7 +235,7 @@ Unsupervised zone analysis with:
 
 ---
 
-## 🔄 Data Loading Pipeline
+## Data Loading Pipeline
 
 For each year (2023–2026), the system tries in order:
 
@@ -262,11 +246,11 @@ For each year (2023–2026), the system tries in order:
 
 ---
 
-## 📄 License
+## License
 
 MIT License — free to use, modify, and distribute.
 
 ---
 
-**🚖 TaxiWise — Drive Smarter, Earn More**  
+**TaxiWise — Drive Smarter, Earn More**  
 *Built with Python, scikit-learn, XGBoost, and Streamlit · NYC Yellow Taxi 2023–2026*
