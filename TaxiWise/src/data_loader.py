@@ -48,14 +48,44 @@ def _optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_MERGED_CSV = ROOT / "yellow_taxi_2023_2024_small_merged.csv"
+
+
 @st.cache_data(show_spinner=False)
 def load_trips() -> pd.DataFrame:
     """Load taxi trips for all years. Returns empty DataFrame on total failure."""
     frames = []
+    loaded_years: set[int] = set()
+
+    # Real 2023 + 2024 data — prefer merged CSV over synthetic fallback
+    if _MERGED_CSV.exists():
+        try:
+            df_m = pd.read_csv(
+                _MERGED_CSV,
+                usecols=lambda c: c not in _CSV_DROP,
+                parse_dates=["tpep_pickup_datetime", "tpep_dropoff_datetime"],
+            )
+            df_m = _ensure_duration(df_m)
+            df_m = _optimize_dtypes(df_m)
+            for yr in [2023, 2024]:
+                sub = df_m[df_m["source_year"] == yr].copy()
+                if not sub.empty:
+                    sub["year"] = yr
+                    enriched = _enrich(sub)
+                    if enriched is not None and not enriched.empty:
+                        frames.append(enriched)
+                        loaded_years.add(yr)
+        except Exception as exc:
+            st.warning(f"⚠️ שגיאה בטעינת merged CSV: {exc}")
+
+    # Load all other years (2025, 2026, and 2023/2024 if not loaded above)
     for year in YEARS:
+        if year in loaded_years:
+            continue
         df = _load_year(year)
         if df is not None and not df.empty:
             frames.append(df)
+
     if not frames:
         st.error(
             "⚠️ לא ניתן לטעון נתונים. "

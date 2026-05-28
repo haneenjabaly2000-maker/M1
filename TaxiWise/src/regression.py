@@ -93,18 +93,23 @@ def _agg_demand(df_subset: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def get_regression_results(feature_cols_tuple: tuple) -> dict:
     """
-    Train and evaluate models. Cached by (sorted) feature set tuple.
-    Returns dict with keys: results, y_te, has_2026, n_train, n_test.
+    Train and evaluate models with 80/20 random split across all years.
+    Using year-based split caused R²<0 when synthetic (200k rows) and real
+    (30k rows) data were on different scales and distributions.
     """
+    from sklearn.model_selection import train_test_split as _tts
     from src.data_loader import load_trips
     df_all = load_trips()
     feature_cols = list(feature_cols_tuple)
 
-    train_df = df_all[df_all["year"].isin(TRAIN_YEARS)]
-    test_df  = df_all[df_all["year"] == TEST_YEAR]
+    demand_all = _agg_demand(df_all)
+    cols_needed = feature_cols + [TARGET]
+    clean = demand_all.dropna(subset=cols_needed)
 
-    train_demand = _agg_demand(train_df)
-    test_demand  = _agg_demand(test_df) if not test_df.empty else pd.DataFrame()
+    idx = list(range(len(clean)))
+    idx_tr, idx_te = _tts(idx, test_size=0.2, random_state=42)
+    train_demand = clean.iloc[idx_tr]
+    test_demand  = clean.iloc[idx_te]
 
     return _fit_all(train_demand, test_demand, feature_cols)
 
@@ -116,19 +121,12 @@ def _fit_all(
 ) -> dict:
     cols_needed = feature_cols + [TARGET]
     tr = train.dropna(subset=cols_needed)
+    te = test.dropna(subset=cols_needed)
     X_tr = tr[feature_cols].values.astype(float)
     y_tr = tr[TARGET].values.astype(float)
-
-    has_2026 = len(test) > 0
-    if has_2026:
-        te = test.dropna(subset=cols_needed)
-        X_te = te[feature_cols].values.astype(float)
-        y_te = te[TARGET].values.astype(float)
-    else:
-        from sklearn.model_selection import train_test_split
-        X_tr, X_te, y_tr, y_te = train_test_split(
-            X_tr, y_tr, test_size=0.2, random_state=42
-        )
+    X_te = te[feature_cols].values.astype(float)
+    y_te = te[TARGET].values.astype(float)
+    has_2026 = False
 
     # Scale for Linear Regression
     scaler = StandardScaler()
