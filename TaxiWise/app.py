@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 import numpy as np
 import pandas as pd
+from datetime import datetime as _dt
 
 st.set_page_config(
     page_title="TaxiWise — AI Transportation",
@@ -214,6 +215,15 @@ _DOW   = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"
 _MON   = ["January","February","March","April","May","June",
           "July","August","September","October","November","December"]
 _MONS  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+# Today's defaults — set once per session so all selectors start at the current date/time
+_today      = _dt.now()
+_now_year   = _today.year
+_now_mon    = _today.month      # 1–12
+_now_dow    = _today.weekday()  # 0=Mon … 6=Sun
+_now_hour   = _today.hour
+_YEAR_LIST  = list(range(2023, 2036))
+_year_idx   = _YEAR_LIST.index(_now_year) if _now_year in _YEAR_LIST else 3
 
 
 def _kpi_row(items, top_idx=0):
@@ -519,17 +529,17 @@ def page_ai_prediction():
 
         tc1, tc2 = st.columns(2)
         with tc1:
-            hour = st.slider("Hour", 0, 23, 18, key="ap_hour",
+            hour = st.slider("Hour", 0, 23, _now_hour, key="ap_hour",
                              help="0=midnight · 8=morning rush · 18=evening rush")
         with tc2:
-            year_sel = st.selectbox("Year", list(range(2023,2036)), index=3, key="ap_year")
+            year_sel = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="ap_year")
 
         dc1, dc2 = st.columns(2)
         with dc1:
-            dow_sel  = st.selectbox("Day of Week", _DOW, key="ap_dow")
+            dow_sel  = st.selectbox("Day of Week", _DOW, index=_now_dow, key="ap_dow")
             dow_num  = _DOW.index(dow_sel)
         with dc2:
-            mon_sel  = st.selectbox("Month", _MON, key="ap_month")
+            mon_sel  = st.selectbox("Month", _MON, index=_now_mon - 1, key="ap_month")
             mon_num  = _MON.index(mon_sel) + 1
 
         st.markdown('<div style="margin-top:12px;font-size:.82rem;font-weight:600;color:#9CA3AF">TRIP STATISTICS <span style="font-weight:400">(editable)</span></div>',
@@ -752,7 +762,7 @@ def page_ai_prediction():
                                    index=min(1, len(labels)-1), key="rs_tgt")
             tgt_id  = int(tgt_lbl.split("— ID ")[-1])
         with r2:
-            rs_yr = st.selectbox("Year", list(range(2023,2036)), index=3, key="rs_yr")
+            rs_yr = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="rs_yr")
 
         td = _zone_defaults(tgt_id)
         tgt_f = {
@@ -818,8 +828,8 @@ def page_ai_prediction():
             wi_dow_lbl = st.selectbox("What if Day?", _DOW, index=dow_num, key="wi_dow")
             wi_dow = _DOW.index(wi_dow_lbl)
         with wc3:
-            wi_year = st.selectbox("What if Year?", list(range(2023,2036)),
-                                   index=list(range(2023,2036)).index(year_sel), key="wi_year")
+            wi_year = st.selectbox("What if Year?", _YEAR_LIST,
+                                   index=_YEAR_LIST.index(year_sel), key="wi_year")
 
         wi_f = {**features,
                 "pickup_hour": float(wi_hour),
@@ -1059,13 +1069,13 @@ def page_forecasting():
         fc_lbl = st.selectbox("Zone", _zone_label_list(), key="fc_zone")
         fc_id  = int(fc_lbl.split("— ID ")[-1])
     with fp2:
-        fc_dow_lbl = st.selectbox("Day of Week", _DOW, key="fc_dow")
+        fc_dow_lbl = st.selectbox("Day of Week", _DOW, index=_now_dow, key="fc_dow")
         fc_dow     = _DOW.index(fc_dow_lbl)
     with fp3:
-        fc_mon_lbl = st.selectbox("Month", _MON, key="fc_month")
+        fc_mon_lbl = st.selectbox("Month", _MON, index=_now_mon - 1, key="fc_month")
         fc_month   = _MON.index(fc_mon_lbl) + 1
     with fp4:
-        fc_year = st.selectbox("Year", list(range(2023,2036)), index=3, key="fc_year")
+        fc_year = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="fc_year")
 
     fd = _zone_defaults(fc_id)
 
@@ -1155,13 +1165,13 @@ def page_forecasting():
     with tab_map:
         st.markdown('<div class="sec">🌡️ Animated Demand Map — Drag the slider to travel through the day</div>',
                     unsafe_allow_html=True)
-        anim_dow_lbl = st.selectbox("Day", _DOW, key="am_dow")
+        anim_dow_lbl = st.selectbox("Day", _DOW, index=_now_dow, key="am_dow")
         anim_dow     = _DOW.index(anim_dow_lbl)
-        anim_mon_lbl = st.selectbox("Month", _MON, key="am_mon")
+        anim_mon_lbl = st.selectbox("Month", _MON, index=_now_mon - 1, key="am_mon")
         anim_mon     = _MON.index(anim_mon_lbl) + 1
-        anim_year    = st.selectbox("Year", list(range(2023,2036)), index=3, key="am_year")
+        anim_year    = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="am_year")
 
-        anim_hour = st.slider("Hour of Day", 0, 23, 18, key="am_hour",
+        anim_hour = st.slider("Hour of Day", 0, 23, _now_hour, key="am_hour",
                               help="Move the slider to watch demand shift across NYC")
 
         with st.spinner(f"Computing demand map for {anim_hour:02d}:00 …"):
