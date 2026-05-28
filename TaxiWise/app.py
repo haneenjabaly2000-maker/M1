@@ -170,6 +170,9 @@ with st.sidebar:
         "📅  Year Comparison":       "comparison",
         "🔮  Demand Prediction":     "prediction",
         "🤖  Real-Time Prediction":  "realtime",
+        "🌡️  AI Demand Map":         "demand_map",
+        "🚗  Driver Tools":          "driver",
+        "🔭  Demand Forecast":       "forecast",
         "🗺️  Zone Recommendations":  "zones",
         "⚙️  Model Performance":     "performance",
         "🔵  Clustering":            "clustering",
@@ -1088,7 +1091,7 @@ def page_realtime_prediction():
             hour = st.slider("Hour of Day", 0, 23, 8, key="rt_hour",
                              help="0 = midnight, 8 = morning rush, 18 = evening rush")
         with c2:
-            year_sel = st.selectbox("Year", list(range(2023, 2031)), index=3, key="rt_year")
+            year_sel = st.selectbox("Year", list(range(2023, 2036)), index=3, key="rt_year")
 
         dow_names  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
         mon_names  = ["January","February","March","April","May","June",
@@ -1228,6 +1231,23 @@ def page_realtime_prediction():
         pill_html += "</div>"
         st.markdown(pill_html, unsafe_allow_html=True)
 
+        # ── Smart demand alerts ────────────────────────────────────────────────
+        if level == "Very High":
+            st.error(
+                "🔴 **Extreme Demand Zone** — Surge pricing is likely active. "
+                "Drivers: head to this zone immediately for maximum earnings."
+            )
+        elif level == "High":
+            st.warning(
+                "🟠 **High Demand Alert** — Strong pickup opportunities in this zone. "
+                "Consider positioning here for the next hour."
+            )
+        elif level == "Medium":
+            st.info(
+                "🟡 **Normal Demand** — Average activity expected. "
+                "Conditions are stable for this zone and time."
+            )
+
     # ── Explainability ────────────────────────────────────────────────────────
     st.markdown("---")
     _section("Why This Prediction? — Feature Insights")
@@ -1331,6 +1351,586 @@ def page_realtime_prediction():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Page — AI Demand Map
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_demand_map():
+    import plotly.express as px
+    from src.zone_coords import get_zone_coord
+    from src.model import FEATURE_COLS
+
+    st.markdown('<div class="page-title">AI Demand Map</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'Interactive demand heatmap — predicted trip demand per NYC zone · 🔵 Low · 🟠 Medium · 🔴 High'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Loading model …"):
+        model, _, _, _, _ = load_xgb_model()
+
+    _section("Time Parameters")
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        map_hour = st.slider("Hour of Day", 0, 23, 18, key="map_hour")
+    with mc2:
+        _dow_names = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        map_dow_lbl = st.selectbox("Day of Week", _dow_names, index=4, key="map_dow")
+        map_dow = _dow_names.index(map_dow_lbl)
+    with mc3:
+        _mon_full = ["January","February","March","April","May","June",
+                     "July","August","September","October","November","December"]
+        map_mon_lbl = st.selectbox("Month", _mon_full, key="map_month")
+        map_month = _mon_full.index(map_mon_lbl) + 1
+
+    # Per-zone feature matrix using demand aggregates
+    zone_stats = (
+        demand.groupby("PULocationID")
+        .agg(
+            avg_fare        =("avg_fare",         "mean"),
+            avg_distance    =("avg_distance",     "mean"),
+            avg_duration    =("avg_duration",     "mean"),
+            zone_total_trips=("zone_total_trips",  "first"),
+            hist_demand     =("trip_count",        "mean"),
+        )
+        .reset_index()
+    )
+    zone_stats["hour"]  = map_hour
+    zone_stats["dow"]   = map_dow
+    zone_stats["month"] = map_month
+
+    for col in ["avg_fare", "avg_distance", "avg_duration", "zone_total_trips"]:
+        med = float(demand[col].median())
+        zone_stats[col] = zone_stats[col].fillna(med)
+
+    zone_stats = zone_stats.dropna(subset=FEATURE_COLS)
+    if zone_stats.empty:
+        st.warning("No demand data available.")
+        return
+
+    zone_stats["predicted_demand"] = np.maximum(
+        model.predict(zone_stats[FEATURE_COLS].values), 0
+    )
+
+    merged = zone_stats.merge(
+        zones[["LocationID", "Zone", "Borough"]],
+        left_on="PULocationID", right_on="LocationID", how="left",
+    )
+    merged["Zone"]    = merged["Zone"].fillna(merged["PULocationID"].astype(str))
+    merged["Borough"] = merged["Borough"].fillna("Unknown")
+
+    coords = [
+        get_zone_coord(int(row["PULocationID"]), str(row["Borough"]))
+        for _, row in merged.iterrows()
+    ]
+    merged["lat"] = [c[0] for c in coords]
+    merged["lon"] = [c[1] for c in coords]
+
+    # Peak hour per zone
+    peak_h = (
+        demand.sort_values("trip_count", ascending=False)
+        .groupby("PULocationID")["hour"].first()
+        .reset_index().rename(columns={"hour": "peak_hour"})
+    )
+    merged = merged.merge(peak_h, on="PULocationID", how="left")
+
+    p33 = float(np.percentile(merged["predicted_demand"], 33))
+    p66 = float(np.percentile(merged["predicted_demand"], 66))
+    merged["Demand Level"] = merged["predicted_demand"].apply(
+        lambda x: "Low" if x < p33 else ("Medium" if x < p66 else "High")
+    )
+    merged["Avg Fare ($)"]       = merged["avg_fare"].round(2)
+    merged["Avg Distance (mi)"]  = merged["avg_distance"].round(2)
+    merged["Historical Avg"]     = merged["hist_demand"].round(1)
+    merged["Predicted Demand"]   = merged["predicted_demand"].round(1)
+
+    fig = px.scatter_mapbox(
+        merged,
+        lat="lat", lon="lon",
+        color="predicted_demand",
+        size="predicted_demand",
+        size_max=30,
+        hover_name="Zone",
+        hover_data={
+            "Borough": True,
+            "Predicted Demand": True,
+            "Avg Fare ($)": True,
+            "Avg Distance (mi)": True,
+            "Historical Avg": True,
+            "peak_hour": True,
+            "Demand Level": True,
+            "lat": False, "lon": False,
+            "predicted_demand": False,
+        },
+        labels={"peak_hour": "Peak Hour"},
+        color_continuous_scale=[[0.0,"#3B82F6"],[0.5,"#F97316"],[1.0,"#EF4444"]],
+        mapbox_style="carto-darkmatter",
+        zoom=10,
+        center={"lat": 40.730, "lon": -73.985},
+        opacity=0.88,
+        title=f"NYC Taxi Demand — {map_dow_lbl} {map_hour:02d}:00 · {map_mon_lbl}",
+    )
+    fig.update_layout(
+        height=600,
+        paper_bgcolor="#1A1D27",
+        font=dict(color="#FAFAFA"),
+        coloraxis_colorbar=dict(title="Trips/hr", tickfont=dict(color="#FAFAFA")),
+        margin={"r": 0, "t": 40, "l": 0, "b": 0},
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+
+    st.markdown("---")
+    top1 = merged.nlargest(1, "predicted_demand").iloc[0]
+    _kpi_row([
+        ("🔴", f"{merged['predicted_demand'].max():.0f}",  "Peak Zone Demand",  "trips/hr"),
+        ("🟡", f"{merged['predicted_demand'].mean():.0f}", "City Average",       "trips/hr"),
+        ("🟢", f"{merged['predicted_demand'].min():.0f}",  "Lowest Demand",     "trips/hr"),
+        ("📍", str(top1["Zone"])[:25],                      "Hottest Zone",      str(top1.get("Borough",""))),
+    ])
+
+    _section("Top 10 Demand Zones")
+    top10 = (
+        merged.nlargest(10, "predicted_demand")
+        [["Zone","Borough","Predicted Demand","Avg Fare ($)","Demand Level","peak_hour"]]
+        .rename(columns={"peak_hour": "Peak Hour"})
+        .reset_index(drop=True)
+    )
+    top10.index = range(1, 11)
+    st.dataframe(top10, use_container_width=True)
+
+    st.markdown(
+        '<div class="info-banner">'
+        '💡 Zone positions are distributed within borough bounds for visualization. '
+        'Demand is predicted by the XGBoost model for the selected time window.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Page — Driver Intelligence Tools
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_driver_tools():
+    import plotly.graph_objects as go
+
+    st.markdown('<div class="page-title">Driver Intelligence Tools</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'Relocation Simulator · Profit Estimator — AI-powered decisions for NYC taxi drivers'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Loading model …"):
+        payload = load_regression_model()
+
+    _dow_names = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    _mon_full  = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"]
+
+    zone_opts = zones[["LocationID", "Zone", "Borough"]].copy()
+    zone_opts["label"] = zone_opts.apply(
+        lambda r: f"{r['Zone']} ({r['Borough']}) — ID {r['LocationID']}", axis=1
+    )
+    labels = zone_opts["label"].tolist()
+
+    tab_reloc, tab_profit = st.tabs(["🚗  Relocation Simulator", "💰  Profit Estimator"])
+
+    # ── Relocation Simulator ─────────────────────────────────────────────────
+    with tab_reloc:
+        _section("Relocation Parameters")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            cur_lbl = st.selectbox("Current Zone", labels, index=0, key="rel_cur")
+            cur_id  = int(cur_lbl.split("— ID ")[-1])
+        with rc2:
+            tgt_lbl = st.selectbox("Target Zone", labels, index=min(1, len(labels)-1), key="rel_tgt")
+            tgt_id  = int(tgt_lbl.split("— ID ")[-1])
+
+        rr1, rr2, rr3, rr4 = st.columns(4)
+        with rr1:
+            rel_hour = st.slider("Hour", 0, 23, 18, key="rel_hour")
+        with rr2:
+            rel_dow_lbl = st.selectbox("Day", _dow_names, key="rel_dow")
+            rel_dow = _dow_names.index(rel_dow_lbl)
+        with rr3:
+            rel_mon_lbl = st.selectbox("Month", _mon_full, key="rel_month")
+            rel_month = _mon_full.index(rel_mon_lbl) + 1
+        with rr4:
+            rel_year = st.selectbox("Year", list(range(2023, 2036)), index=3, key="rel_year")
+
+        def _zone_feats(loc_id, hour, dow, month, year):
+            z = demand[demand["PULocationID"] == loc_id]
+            src = z if not z.empty else demand
+            return {
+                "pickup_location_id":    float(loc_id),
+                "pickup_hour":           float(hour),
+                "pickup_day_of_week":    float(dow),
+                "pickup_month":          float(month),
+                "historical_trip_count": float(
+                    src["zone_total_trips"].iloc[0] if not z.empty
+                    else float(demand["zone_total_trips"].median())
+                ),
+                "avg_fare_amount":   max(1.0,  min(500.0, float(src["avg_fare"].mean()))),
+                "avg_trip_distance": max(0.1,  min(100.0, float(src["avg_distance"].mean()))),
+                "avg_trip_duration": max(1.0,  min(300.0, float(src["avg_duration"].mean()))),
+                "year":              float(year),
+            }
+
+        cur_f = _zone_feats(cur_id, rel_hour, rel_dow, rel_month, rel_year)
+        tgt_f = _zone_feats(tgt_id, rel_hour, rel_dow, rel_month, rel_year)
+        cur_pred = predict_regression(payload, cur_f)
+        tgt_pred = predict_regression(payload, tgt_f)
+
+        delta_abs = tgt_pred - cur_pred
+        delta_pct = (delta_abs / max(cur_pred, 1)) * 100
+        cur_rev   = cur_pred * cur_f["avg_fare_amount"] * 0.70
+        tgt_rev   = tgt_pred * tgt_f["avg_fare_amount"] * 0.70
+        rev_delta = tgt_rev - cur_rev
+
+        cur_name = zone_opts[zone_opts["LocationID"] == cur_id]["Zone"].iloc[0] \
+                   if cur_id in zone_opts["LocationID"].values else f"Zone {cur_id}"
+        tgt_name = zone_opts[zone_opts["LocationID"] == tgt_id]["Zone"].iloc[0] \
+                   if tgt_id in zone_opts["LocationID"].values else f"Zone {tgt_id}"
+
+        if delta_pct > 20:
+            rec_color, rec_icon, rec_text = "#10B981", "✅", "Strongly Recommended"
+        elif delta_pct > 5:
+            rec_color, rec_icon, rec_text = "#F7C948", "⚡", "Recommended"
+        elif delta_pct > -5:
+            rec_color, rec_icon, rec_text = "#3B82F6", "ℹ️", "Neutral — similar demand"
+        else:
+            rec_color, rec_icon, rec_text = "#EF4444", "⚠️", "Not Recommended"
+
+        arrow_d  = "▲" if delta_abs >= 0 else "▼"
+        arrow_r  = "▲" if rev_delta >= 0 else "▼"
+        clr_rev  = "#10B981" if rev_delta >= 0 else "#EF4444"
+
+        _section("Simulation Result")
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#1A1D27,#252836);
+                    border:1.5px solid {rec_color};border-radius:16px;
+                    padding:22px 28px;margin-bottom:16px;">
+          <div style="font-size:1.1rem;font-weight:700;color:#FAFAFA;margin-bottom:14px;">
+            {rec_icon}&nbsp; Moving from
+            <span style="color:#F7C948;">{cur_name}</span> →
+            <span style="color:#3B82F6;">{tgt_name}</span>
+          </div>
+          <div style="display:flex;gap:32px;flex-wrap:wrap;">
+            <div>
+              <div style="color:#9CA3AF;font-size:.75rem;margin-bottom:4px;">Demand Change</div>
+              <div style="font-size:1.55rem;font-weight:800;color:#F7C948;">
+                {arrow_d} {abs(delta_abs):.0f} trips/hr
+              </div>
+              <div style="font-size:.8rem;color:#9CA3AF;">({delta_pct:+.1f}%)</div>
+            </div>
+            <div>
+              <div style="color:#9CA3AF;font-size:.75rem;margin-bottom:4px;">Est. Revenue/hr Δ</div>
+              <div style="font-size:1.55rem;font-weight:800;color:{clr_rev};">
+                {arrow_r} ${abs(rev_delta):.2f}
+              </div>
+              <div style="font-size:.8rem;color:#9CA3AF;">driver share 70%</div>
+            </div>
+            <div>
+              <div style="color:#9CA3AF;font-size:.75rem;margin-bottom:4px;">Recommendation</div>
+              <div style="font-size:1.1rem;font-weight:700;color:{rec_color};">{rec_text}</div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        _kpi_row([
+            ("📍", f"{cur_pred:.0f}", f"Demand · {cur_name[:22]}", "trips/hr"),
+            ("🎯", f"{tgt_pred:.0f}", f"Demand · {tgt_name[:22]}", "trips/hr"),
+            ("💰", f"${cur_rev:.2f}",  "Current est. revenue/hr",  "70% driver share"),
+            ("💵", f"${tgt_rev:.2f}",  "Target est. revenue/hr",   "70% driver share"),
+        ])
+
+        if delta_pct > 5:
+            st.success(
+                f"💡 Moving to **{tgt_name}** could increase demand by "
+                f"**{abs(delta_abs):.0f} trips/hr** ({delta_pct:.1f}%) "
+                f"and revenue by **${rev_delta:.2f}/hr**."
+            )
+        elif delta_pct < -5:
+            st.warning(
+                f"⚠️ Moving to **{tgt_name}** would decrease demand by "
+                f"**{abs(delta_abs):.0f} trips/hr** ({abs(delta_pct):.1f}%)."
+            )
+
+        # Side-by-side bar comparison
+        fig_cmp = go.Figure(go.Bar(
+            x=[cur_name[:20], tgt_name[:20]],
+            y=[cur_pred, tgt_pred],
+            marker_color=["#F7C948", "#3B82F6"],
+            text=[f"{cur_pred:.0f}", f"{tgt_pred:.0f}"],
+            textposition="outside",
+        ))
+        fig_cmp.update_layout(
+            title="Demand Comparison",
+            yaxis_title="Predicted Trips/hr",
+            template="plotly_dark",
+            paper_bgcolor="#1A1D27",
+            plot_bgcolor="#1A1D27",
+            font=dict(color="#FAFAFA"),
+            height=320,
+        )
+        _pchart(fig_cmp)
+
+    # ── Profit Estimator ─────────────────────────────────────────────────────
+    with tab_profit:
+        _section("Profit Estimation Parameters")
+        pe1, pe2 = st.columns(2)
+        with pe1:
+            prf_lbl     = st.selectbox("Zone", labels, key="prf_zone")
+            prf_id      = int(prf_lbl.split("— ID ")[-1])
+            prf_dow_lbl = st.selectbox("Day of Week", _dow_names, key="prf_dow")
+            prf_dow     = _dow_names.index(prf_dow_lbl)
+            prf_mon_lbl = st.selectbox("Month", _mon_full, key="prf_month")
+            prf_month   = _mon_full.index(prf_mon_lbl) + 1
+        with pe2:
+            prf_year   = st.selectbox("Year", list(range(2023, 2036)), index=3, key="prf_year")
+            hr_start, hr_end = st.slider("Working Hours", 0, 23, (8, 20), key="prf_hours")
+            drv_share  = st.slider("Driver Share (%)", 50, 100, 70, key="prf_share") / 100.0
+
+        pz = demand[demand["PULocationID"] == prf_id]
+        ps = pz if not pz.empty else demand
+        prf_fare = max(1.0,  min(500.0, float(ps["avg_fare"].mean())))
+        prf_dist = max(0.1,  min(100.0, float(ps["avg_distance"].mean())))
+        prf_dur  = max(1.0,  min(300.0, float(ps["avg_duration"].mean())))
+        prf_hist = float(ps["zone_total_trips"].iloc[0] if not pz.empty
+                         else float(demand["zone_total_trips"].median()))
+
+        hourly_data = []
+        for h in range(hr_start, hr_end + 1):
+            p = predict_regression(payload, {
+                "pickup_location_id":    float(prf_id),
+                "pickup_hour":           float(h),
+                "pickup_day_of_week":    float(prf_dow),
+                "pickup_month":          float(prf_month),
+                "historical_trip_count": prf_hist,
+                "avg_fare_amount":       prf_fare,
+                "avg_trip_distance":     prf_dist,
+                "avg_trip_duration":     prf_dur,
+                "year":                  float(prf_year),
+            })
+            hourly_data.append({"Hour": h, "Trips": p, "Revenue": p * prf_fare * drv_share})
+
+        hdf = pd.DataFrame(hourly_data)
+        total_trips = float(hdf["Trips"].sum())
+        total_rev   = float(hdf["Revenue"].sum())
+        n_hrs = hr_end - hr_start + 1
+
+        _kpi_row([
+            ("⏰", f"{hr_start:02d}:00–{hr_end:02d}:00", "Working Hours",     ""),
+            ("🚖", f"{total_trips:.0f}",                  "Predicted Trips",   "total"),
+            ("💵", f"${total_rev:.2f}",                   "Estimated Revenue", f"{int(drv_share*100)}% share"),
+            ("📊", f"${total_rev/n_hrs:.2f}",             "Avg Revenue/hr",    ""),
+        ])
+
+        fig_prf = go.Figure()
+        fig_prf.add_trace(go.Bar(
+            x=hdf["Hour"], y=hdf["Trips"],
+            name="Trips/hr", marker_color="#F7C948", yaxis="y",
+        ))
+        fig_prf.add_trace(go.Scatter(
+            x=hdf["Hour"], y=hdf["Revenue"],
+            name="Revenue ($)", line=dict(color="#10B981", width=2.5),
+            mode="lines+markers", yaxis="y2",
+        ))
+        fig_prf.update_layout(
+            title=f"Hourly Breakdown — {prf_lbl.split(' (')[0]}",
+            xaxis_title="Hour of Day",
+            yaxis =dict(title="Trips/hr",    side="left"),
+            yaxis2=dict(title="Revenue ($)", side="right", overlaying="y", showgrid=False),
+            legend=dict(bgcolor="rgba(0,0,0,0)"),
+            template="plotly_dark",
+            paper_bgcolor="#1A1D27",
+            plot_bgcolor="#1A1D27",
+            font=dict(color="#FAFAFA"),
+            height=370,
+        )
+        _pchart(fig_prf)
+
+        st.markdown(
+            '<div class="info-banner">'
+            '💡 Revenue = Predicted Trips × Avg Fare × Driver Share. '
+            'Actual revenue depends on acceptance rate, traffic, and waiting time.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Page — Demand Forecast
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_forecast():
+    import plotly.graph_objects as go
+
+    st.markdown('<div class="page-title">Demand Forecast</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'Hourly · Day-of-week · Monthly demand forecast per zone — supports future years 2027–2035'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Loading model …"):
+        payload = load_regression_model()
+
+    _dow_names = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    _mon_full  = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"]
+    _mon_short = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    _section("Forecast Parameters")
+    fp1, fp2, fp3, fp4 = st.columns(4)
+    with fp1:
+        fz_opts = zones[["LocationID","Zone","Borough"]].copy()
+        fz_opts["label"] = fz_opts.apply(
+            lambda r: f"{r['Zone']} ({r['Borough']}) — ID {r['LocationID']}", axis=1
+        )
+        fc_lbl = st.selectbox("Zone", fz_opts["label"].tolist(), key="fc_zone")
+        fc_id  = int(fc_lbl.split("— ID ")[-1])
+    with fp2:
+        fc_dow_lbl = st.selectbox("Day of Week", _dow_names, key="fc_dow")
+        fc_dow = _dow_names.index(fc_dow_lbl)
+    with fp3:
+        fc_mon_lbl = st.selectbox("Month", _mon_full, key="fc_month")
+        fc_month = _mon_full.index(fc_mon_lbl) + 1
+    with fp4:
+        fc_year = st.selectbox("Year", list(range(2023, 2036)), index=3, key="fc_year")
+
+    fz = demand[demand["PULocationID"] == fc_id]
+    fs = fz if not fz.empty else demand
+    fc_hist = float(fs["zone_total_trips"].iloc[0] if not fz.empty
+                    else float(demand["zone_total_trips"].median()))
+    fc_fare = max(1.0,  min(500.0, float(fs["avg_fare"].mean())))
+    fc_dist = max(0.1,  min(100.0, float(fs["avg_distance"].mean())))
+    fc_dur  = max(1.0,  min(300.0, float(fs["avg_duration"].mean())))
+
+    def _fc_pred(hour, dow, month, year):
+        return predict_regression(payload, {
+            "pickup_location_id":    float(fc_id),
+            "pickup_hour":           float(hour),
+            "pickup_day_of_week":    float(dow),
+            "pickup_month":          float(month),
+            "historical_trip_count": fc_hist,
+            "avg_fare_amount":       fc_fare,
+            "avg_trip_distance":     fc_dist,
+            "avg_trip_duration":     fc_dur,
+            "year":                  float(year),
+        })
+
+    _DARK = dict(
+        template="plotly_dark",
+        paper_bgcolor="#1A1D27",
+        plot_bgcolor="#1A1D27",
+        font=dict(color="#FAFAFA"),
+        height=390,
+    )
+
+    tab_h, tab_d, tab_m = st.tabs(
+        ["⏰  24-Hour Forecast", "📅  Day-of-Week Pattern", "🗓️  Monthly Pattern"]
+    )
+
+    with tab_h:
+        hours  = list(range(24))
+        preds  = [_fc_pred(h, fc_dow, fc_month, fc_year) for h in hours]
+        peak_h = hours[int(np.argmax(preds))]
+        colors = ["#EF4444" if h == peak_h else "#F7C948" for h in hours]
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=hours, y=preds, marker_color=colors, name="Predicted Demand",
+            text=[f"{p:.0f}" if h in (peak_h, hours[int(np.argmin(preds))]) else ""
+                  for h, p in zip(hours, preds)],
+            textposition="outside",
+        ))
+        fig.add_trace(go.Scatter(
+            x=hours, y=preds, mode="lines",
+            line=dict(color="rgba(247,201,72,0.4)", width=2, dash="dot"),
+            showlegend=False,
+        ))
+        fig.update_layout(
+            title=f"24-Hour Forecast — {fc_lbl.split(' (')[0]} · {fc_dow_lbl} · {fc_mon_lbl} {fc_year}",
+            xaxis_title="Hour of Day", yaxis_title="Predicted Trips/hr",
+            xaxis=dict(tickmode="linear", tick0=0, dtick=2),
+            **_DARK,
+        )
+        _pchart(fig)
+        _kpi_row([
+            ("⚡", f"{max(preds):.0f}",        f"Peak Demand ({peak_h}:00)", "trips/hr"),
+            ("📉", f"{min(preds):.0f}",        "Lowest Demand",              "trips/hr"),
+            ("📊", f"{np.mean(preds):.0f}",    "Daily Average",              "trips/hr"),
+            ("💰", f"${max(preds)*fc_fare*0.7:.2f}", "Peak Hour Revenue est.", "70% share"),
+        ])
+
+    with tab_d:
+        preds_d  = [_fc_pred(18, d, fc_month, fc_year) for d in range(7)]
+        peak_day = int(np.argmax(preds_d))
+        clrs_d   = ["#EF4444" if i == peak_day else "#3B82F6" for i in range(7)]
+
+        fig_d = go.Figure(go.Bar(
+            x=_dow_names, y=preds_d, marker_color=clrs_d,
+            text=[f"{p:.0f}" for p in preds_d], textposition="outside",
+        ))
+        fig_d.update_layout(
+            title=f"Day-of-Week Pattern — {fc_lbl.split(' (')[0]} · 18:00 · {fc_mon_lbl} {fc_year}",
+            xaxis_title="Day", yaxis_title="Predicted Trips/hr",
+            **_DARK,
+        )
+        _pchart(fig_d)
+        _kpi_row([
+            ("🏆", _dow_names[peak_day],       "Busiest Day",   "at 18:00"),
+            ("⚡", f"{max(preds_d):.0f}",      "Peak Demand",   "trips/hr"),
+            ("📊", f"{np.mean(preds_d):.0f}",  "Weekly Avg",    "trips/hr"),
+            ("📉", f"{min(preds_d):.0f}",      "Quietest Day",  "trips/hr"),
+        ])
+
+    with tab_m:
+        preds_m  = [_fc_pred(18, fc_dow, m, fc_year) for m in range(1, 13)]
+        peak_mon = int(np.argmax(preds_m))
+
+        fig_m = go.Figure()
+        fig_m.add_trace(go.Scatter(
+            x=_mon_short, y=preds_m, mode="lines+markers",
+            line=dict(color="#3B82F6", width=2.5),
+            marker=dict(
+                color=["#EF4444" if i == peak_mon else "#3B82F6" for i in range(12)],
+                size=[12 if i == peak_mon else 7 for i in range(12)],
+            ),
+            fill="tozeroy", fillcolor="rgba(59,130,246,0.08)",
+            name="Predicted Demand",
+        ))
+        fig_m.update_layout(
+            title=f"Monthly Pattern — {fc_lbl.split(' (')[0]} · {fc_dow_lbl} · 18:00 · {fc_year}",
+            xaxis_title="Month", yaxis_title="Predicted Trips/hr",
+            **_DARK,
+        )
+        _pchart(fig_m)
+        _kpi_row([
+            ("🏆", _mon_short[peak_mon],       "Busiest Month", f"at 18:00"),
+            ("⚡", f"{max(preds_m):.0f}",      "Peak Demand",   "trips/hr"),
+            ("📊", f"{np.mean(preds_m):.0f}",  "Annual Avg",    "trips/hr"),
+            ("📉", f"{min(preds_m):.0f}",      "Quietest Month","trips/hr"),
+        ])
+
+    st.markdown("---")
+    st.markdown(
+        '<div class="info-banner">'
+        '💡 Predictions use the regression model trained on 2023–2026 data. '
+        'Future year forecasts (2027+) extrapolate based on learned temporal patterns. '
+        'All forecasts are per-hour trip counts for the selected zone.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Router
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1340,6 +1940,9 @@ _ROUTES = {
     "comparison":  page_comparison,
     "prediction":  page_prediction,
     "realtime":    page_realtime_prediction,
+    "demand_map":  page_demand_map,
+    "driver":      page_driver_tools,
+    "forecast":    page_forecast,
     "zones":       page_recommendations,
     "performance": page_performance,
     "clustering":  page_clustering,
