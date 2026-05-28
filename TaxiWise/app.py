@@ -1052,12 +1052,13 @@ def page_realtime_prediction():
     def _zone_defaults(loc_id):
         z = demand[demand["PULocationID"] == loc_id]
         src = z if not z.empty else demand
+        # Cast to Python float and clamp within number_input bounds
         return {
             "hist": float(src["zone_total_trips"].iloc[0]) if not z.empty
                     else float(demand["zone_total_trips"].median()),
-            "fare": float(src["avg_fare"].mean()),
-            "dist": float(src["avg_distance"].mean()),
-            "dur":  float(src["avg_duration"].mean()),
+            "fare": max(1.0,  min(500.0, float(src["avg_fare"].mean()))),
+            "dist": max(0.1,  min(100.0, float(src["avg_distance"].mean()))),
+            "dur":  max(1.0,  min(300.0, float(src["avg_duration"].mean()))),
         }
 
     # ── Layout ────────────────────────────────────────────────────────────────
@@ -1087,7 +1088,7 @@ def page_realtime_prediction():
             hour = st.slider("Hour of Day", 0, 23, 8, key="rt_hour",
                              help="0 = midnight, 8 = morning rush, 18 = evening rush")
         with c2:
-            year_sel = st.selectbox("Year", [2023, 2024, 2025, 2026], index=3, key="rt_year")
+            year_sel = st.selectbox("Year", list(range(2023, 2031)), index=3, key="rt_year")
 
         dow_names  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
         mon_names  = ["January","February","March","April","May","June",
@@ -1104,12 +1105,12 @@ def page_realtime_prediction():
         c5, c6 = st.columns(2)
         with c5:
             avg_fare = st.number_input("Avg Fare ($)", min_value=1.0, max_value=500.0,
-                                       value=round(defs["fare"], 2), step=0.5, key="rt_fare")
+                                       value=float(round(defs["fare"], 2)), step=0.5, key="rt_fare")
             avg_dist = st.number_input("Avg Distance (mi)", min_value=0.1, max_value=100.0,
-                                       value=round(defs["dist"], 2), step=0.1, key="rt_dist")
+                                       value=float(round(defs["dist"], 2)), step=0.1, key="rt_dist")
         with c6:
             avg_dur  = st.number_input("Avg Duration (min)", min_value=1.0, max_value=300.0,
-                                       value=round(defs["dur"], 1), step=1.0, key="rt_dur")
+                                       value=float(round(defs["dur"], 1)), step=1.0, key="rt_dur")
             hist_cnt = st.number_input("Historical Trip Count", min_value=0, max_value=500000,
                                        value=int(defs["hist"]), step=100, key="rt_hist")
 
