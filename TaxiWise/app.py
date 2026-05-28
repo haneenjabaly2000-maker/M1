@@ -169,6 +169,7 @@ with st.sidebar:
         "📈  Historical Analytics":  "analytics",
         "📅  Year Comparison":       "comparison",
         "🔮  Demand Prediction":     "prediction",
+        "🤖  Real-Time Prediction":  "realtime",
         "🗺️  Zone Recommendations":  "zones",
         "⚙️  Model Performance":     "performance",
         "🔵  Clustering":            "clustering",
@@ -1016,6 +1017,319 @@ def page_regression():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Page — Real-Time Prediction
+# ═════════════════════════════════════════════════════════════════════════════
+
+def page_realtime_prediction():
+    st.markdown('<div class="page-title">Real-Time Prediction</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">'
+        'AI demand forecast for any input — generalises to combinations never seen in training data'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Loading model …"):
+        payload = load_regression_model()
+
+    m          = payload["metrics"]
+    model_name = payload["model_name"]
+    model_obj  = payload["model"]
+    scaler     = payload["scaler"]
+    feat_cols  = payload["feature_cols"]
+    y_test     = payload["y_test"]
+
+    _kpi_row([
+        ("🤖", model_name,           "Active Model",   "generalises to new inputs"),
+        ("📉", f"{m['mae']:.2f}",    "MAE",            "avg trips error"),
+        ("📈", f"{m['r2']:.3f}",     "R² Score",       "variance explained"),
+        ("🏋️", f"{payload['n_train']:,}", "Train rows", "all years"),
+    ])
+
+    st.markdown("---")
+
+    # ── Default stats (pre-fill from historical median) ───────────────────────
+    def _zone_defaults(loc_id):
+        z = demand[demand["PULocationID"] == loc_id]
+        src = z if not z.empty else demand
+        return {
+            "hist": float(src["zone_total_trips"].iloc[0]) if not z.empty
+                    else float(demand["zone_total_trips"].median()),
+            "fare": float(src["avg_fare"].mean()),
+            "dist": float(src["avg_distance"].mean()),
+            "dur":  float(src["avg_duration"].mean()),
+        }
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+    col_form, col_res = st.columns([1, 1], gap="large")
+
+    with col_form:
+        _section("Input Parameters")
+        st.markdown(
+            '<div class="info-banner" style="margin-bottom:12px;">'
+            '💡 ניתן להזין כל ערך — המודל יבצע הכללה גם עבור קומבינציות חדשות.'
+            '</div>', unsafe_allow_html=True,
+        )
+
+        # Zone
+        zone_opts = zones[["LocationID", "Zone", "Borough"]].copy()
+        zone_opts["label"] = zone_opts.apply(
+            lambda r: f"{r['Zone']} ({r['Borough']}) — ID {r['LocationID']}", axis=1
+        )
+        zone_label = st.selectbox("Pickup Zone", zone_opts["label"].tolist(),
+                                  index=0, key="rt_zone")
+        loc_id = int(zone_label.split("— ID ")[-1])
+        defs   = _zone_defaults(loc_id)
+
+        # Time
+        c1, c2 = st.columns(2)
+        with c1:
+            hour = st.slider("Hour of Day", 0, 23, 8, key="rt_hour",
+                             help="0 = midnight, 8 = morning rush, 18 = evening rush")
+        with c2:
+            year_sel = st.selectbox("Year", [2023, 2024, 2025, 2026], index=3, key="rt_year")
+
+        dow_names  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        mon_names  = ["January","February","March","April","May","June",
+                      "July","August","September","October","November","December"]
+        c3, c4 = st.columns(2)
+        with c3:
+            dow_sel  = st.selectbox("Day of Week", dow_names, key="rt_dow")
+            dow_num  = dow_names.index(dow_sel)
+        with c4:
+            month_sel = st.selectbox("Month", mon_names, key="rt_month")
+            month_num = mon_names.index(month_sel) + 1
+
+        st.markdown("**Trip Statistics** *(editable — override with any value)*")
+        c5, c6 = st.columns(2)
+        with c5:
+            avg_fare = st.number_input("Avg Fare ($)", min_value=1.0, max_value=500.0,
+                                       value=round(defs["fare"], 2), step=0.5, key="rt_fare")
+            avg_dist = st.number_input("Avg Distance (mi)", min_value=0.1, max_value=100.0,
+                                       value=round(defs["dist"], 2), step=0.1, key="rt_dist")
+        with c6:
+            avg_dur  = st.number_input("Avg Duration (min)", min_value=1.0, max_value=300.0,
+                                       value=round(defs["dur"], 1), step=1.0, key="rt_dur")
+            hist_cnt = st.number_input("Historical Trip Count", min_value=0, max_value=500000,
+                                       value=int(defs["hist"]), step=100, key="rt_hist")
+
+        pax = st.slider("Passenger Count *(informational)*", 1, 6, 1, key="rt_pax",
+                        help="Not a model feature — used for explainability context only")
+
+        st.markdown("")
+        predict_clicked = st.button("🔮  Predict Demand", use_container_width=True,
+                                    type="primary", key="rt_btn")
+
+    # ── Validation ────────────────────────────────────────────────────────────
+    errors = []
+    if not (0 <= hour <= 23):     errors.append("Hour must be 0–23")
+    if not (1 <= month_num <= 12): errors.append("Month must be 1–12")
+    if avg_fare <= 0:              errors.append("Fare must be > 0")
+    if avg_dist <= 0:              errors.append("Distance must be > 0")
+    if avg_dur  <= 0:              errors.append("Duration must be > 0")
+
+    with col_res:
+        _section("Prediction Result")
+
+        if errors:
+            for e in errors:
+                st.error(f"⚠️ {e}")
+            st.stop()
+
+        # ── Build feature vector ───────────────────────────────────────────────
+        features = {
+            "pickup_location_id":    float(loc_id),
+            "pickup_hour":           float(hour),
+            "pickup_day_of_week":    float(dow_num),
+            "pickup_month":          float(month_num),
+            "historical_trip_count": float(hist_cnt),
+            "avg_fare_amount":       float(avg_fare),
+            "avg_trip_distance":     float(avg_dist),
+            "avg_trip_duration":     float(avg_dur),
+            "year":                  float(year_sel),
+        }
+        pred = predict_regression(payload, features)
+
+        # ── Confidence range (RF: 10th–90th percentile of tree preds) ─────────
+        ci_lo = ci_hi = None
+        if hasattr(model_obj, "estimators_"):
+            X_raw = np.array([[features[f] for f in feat_cols]], dtype=float)
+            tree_preds = np.maximum(
+                [est.predict(X_raw)[0] for est in model_obj.estimators_], 0
+            )
+            ci_lo = float(np.percentile(tree_preds, 10))
+            ci_hi = float(np.percentile(tree_preds, 90))
+
+        # ── Demand level ──────────────────────────────────────────────────────
+        p25 = float(np.percentile(y_test, 25))
+        p75 = float(np.percentile(y_test, 75))
+        p90 = float(np.percentile(y_test, 90))
+
+        if pred < p25:
+            level, lvl_color, lvl_emoji = "Low",       "#6B7280", "🟤"
+        elif pred < p75:
+            level, lvl_color, lvl_emoji = "Medium",    "#F7C948", "🟡"
+        elif pred < p90:
+            level, lvl_color, lvl_emoji = "High",      "#F97316", "🟠"
+        else:
+            level, lvl_color, lvl_emoji = "Very High", "#EF4444", "🔴"
+
+        # ── Historical comparison ──────────────────────────────────────────────
+        hist_rows = demand[(demand["PULocationID"] == loc_id) & (demand["hour"] == hour)]
+        hist_avg  = float(hist_rows["trip_count"].mean()) if len(hist_rows) > 0 else 0.0
+        diff_pct  = ((pred - hist_avg) / max(hist_avg, 1)) * 100
+        arrow     = "▲" if diff_pct >= 0 else "▼"
+        clr_diff  = "#10B981" if diff_pct >= 0 else "#EF4444"
+
+        # ── Prediction card ────────────────────────────────────────────────────
+        ci_html = (
+            f'<div style="margin-top:8px;font-size:.78rem;color:#9CA3AF;">'
+            f'Confidence range: <b style="color:#FAFAFA;">{ci_lo:.0f} – {ci_hi:.0f} trips</b>'
+            f'</div>'
+        ) if ci_lo is not None else ""
+
+        st.markdown(f"""
+        <div class="pred-card">
+          <div class="pred-value">{pred:.0f}</div>
+          <div class="pred-label">Predicted trips / hour</div>
+          <div style="margin-top:10px;">
+            <span style="background:{lvl_color};color:#fff;font-weight:700;
+                   padding:4px 18px;border-radius:20px;font-size:.88rem;">
+              {lvl_emoji} {level} Demand
+            </span>
+          </div>
+          <div style="margin-top:12px;font-size:.8rem;color:#9CA3AF;">
+            Historical avg at {hour:02d}:00 →
+            <b style="color:#FAFAFA;">{hist_avg:.0f} trips</b>
+          </div>
+          <div style="font-size:.82rem;color:{clr_diff};">
+            {arrow} {abs(diff_pct):.1f}% vs. historical average
+          </div>
+          {ci_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Feature pills ──────────────────────────────────────────────────────
+        pills = [
+            ("Avg Fare",  f"${avg_fare:.2f}"),
+            ("Distance",  f"{avg_dist:.1f} mi"),
+            ("Duration",  f"{avg_dur:.0f} min"),
+            ("Zone Hist.",f"{int(hist_cnt):,}"),
+            ("Passengers",f"{pax}"),
+        ]
+        pill_html = '<div class="pill-row">'
+        for lbl, val in pills:
+            pill_html += (
+                f'<div class="pill">'
+                f'<span style="color:#9CA3AF;font-size:.7rem;">{lbl}</span>'
+                f'<br><b>{val}</b></div>'
+            )
+        pill_html += "</div>"
+        st.markdown(pill_html, unsafe_allow_html=True)
+
+    # ── Explainability ────────────────────────────────────────────────────────
+    st.markdown("---")
+    _section("Why This Prediction? — Feature Insights")
+
+    def _insight(icon, title, detail, color):
+        return (
+            f'<div style="background:#1E2130;border-left:3px solid {color};'
+            f'padding:10px 14px;border-radius:6px;margin-bottom:8px;">'
+            f'<span style="font-size:1.1rem;">{icon}</span> '
+            f'<b style="color:#FAFAFA;">{title}</b>'
+            f'<div style="color:#9CA3AF;font-size:.78rem;margin-top:3px;">{detail}</div>'
+            f'</div>'
+        )
+
+    insights_html = ""
+
+    # Hour
+    if hour in range(7, 10):
+        insights_html += _insight("🌅","Morning Rush Hour",
+            f"שעה {hour}:00 — שיא הביקוש לנסיעות בוקר (7–9)", "#F97316")
+    elif hour in range(17, 20):
+        insights_html += _insight("🌆","Evening Rush Hour",
+            f"שעה {hour}:00 — שיא הביקוש לנסיעות ערב (17–19)", "#F97316")
+    elif hour in range(22, 24) or hour < 3:
+        insights_html += _insight("🌙","Night Hours",
+            f"שעה {hour}:00 — ביקוש נמוך בשעות הלילה", "#6B7280")
+    else:
+        insights_html += _insight("☀️","Standard Hours",
+            f"שעה {hour}:00 — עומס ממוצע", "#3B82F6")
+
+    # Day
+    if dow_num >= 5:
+        insights_html += _insight("📅","Weekend",
+            f"{dow_sel} — נסיעות פנאי, פחות נסיעות עבודה", "#8B5CF6")
+    else:
+        insights_html += _insight("📅","Weekday",
+            f"{dow_sel} — דפוסי עומס רגילים", "#3B82F6")
+
+    # Zone demand level
+    zone_pct = float(np.mean(demand["zone_total_trips"] <= hist_cnt) * 100)
+    zone_info = zones[zones["LocationID"] == loc_id]
+    zone_name = zone_info["Zone"].iloc[0] if not zone_info.empty else f"Zone {loc_id}"
+    if zone_pct >= 80:
+        insights_html += _insight("📍","High-Demand Zone",
+            f"{zone_name} — Top {100-int(zone_pct):.0f}% of all zones by historical volume", "#10B981")
+    elif zone_pct <= 20:
+        insights_html += _insight("📍","Low-Demand Zone",
+            f"{zone_name} — Below average zone activity ({int(zone_pct):.0f}th percentile)", "#6B7280")
+    else:
+        insights_html += _insight("📍","Average Zone",
+            f"{zone_name} — {int(zone_pct):.0f}th percentile by historical trip volume", "#3B82F6")
+
+    # Trip distance
+    dist_median = float(demand["avg_distance"].median())
+    if avg_dist > dist_median * 1.5:
+        insights_html += _insight("🛣️","Long Trip",
+            f"{avg_dist:.1f} mi — {((avg_dist/dist_median)-1)*100:.0f}% above median distance ({dist_median:.1f} mi)", "#F7C948")
+    elif avg_dist < dist_median * 0.5:
+        insights_html += _insight("🛣️","Short Trip",
+            f"{avg_dist:.1f} mi — below median distance ({dist_median:.1f} mi)", "#6B7280")
+    else:
+        insights_html += _insight("🛣️","Typical Distance",
+            f"{avg_dist:.1f} mi — close to median distance ({dist_median:.1f} mi)", "#3B82F6")
+
+    # Month / Season
+    seasons = {
+        (12,1,2): ("❄️","Winter","חודשי חורף — מזג אוויר עלול להפחית ביקוש","#6B7280"),
+        (3,4,5):  ("🌸","Spring","אביב — ביקוש מאוזן","#3B82F6"),
+        (6,7,8):  ("☀️","Summer","קיץ — עלייה בתיירות ונסיעות פנאי","#F97316"),
+        (9,10,11):("🍂","Autumn","סתיו — ביקוש ממוצע","#8B5CF6"),
+    }
+    for months_tuple, (icon, name, detail, color) in seasons.items():
+        if month_num in months_tuple:
+            insights_html += _insight(icon, f"{name} — {mon_names[month_num-1]}",
+                                      detail, color)
+            break
+
+    # Passenger count context
+    if pax >= 3:
+        insights_html += _insight("👥","Multiple Passengers",
+            f"{pax} נוסעים — נסיעות קבוצתיות לרוב קצרות יותר", "#8B5CF6")
+
+    st.markdown(
+        f'<div style="columns:2;column-gap:16px;">{insights_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Model confidence summary ───────────────────────────────────────────────
+    if ci_lo is not None:
+        st.markdown("---")
+        _section("Confidence Analysis")
+        c_a, c_b, c_c = st.columns(3)
+        c_a.metric("Prediction", f"{pred:.0f} trips")
+        c_b.metric("Lower Bound (P10)", f"{ci_lo:.0f} trips")
+        c_c.metric("Upper Bound (P90)", f"{ci_hi:.0f} trips")
+        spread = ci_hi - ci_lo
+        confidence_pct = max(0, 100 - (spread / max(pred, 1)) * 50)
+        st.progress(min(int(confidence_pct), 100),
+                    text=f"Confidence Score: {confidence_pct:.0f}%  "
+                         f"(spread = {spread:.0f} trips across 150 trees)")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Router
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1024,6 +1338,7 @@ _ROUTES = {
     "analytics":   page_analytics,
     "comparison":  page_comparison,
     "prediction":  page_prediction,
+    "realtime":    page_realtime_prediction,
     "zones":       page_recommendations,
     "performance": page_performance,
     "clustering":  page_clustering,
